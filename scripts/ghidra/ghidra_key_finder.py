@@ -858,6 +858,20 @@ def cmd_hunt(args: argparse.Namespace) -> int:
         print(f"error: binary not found: {binary}", file=sys.stderr)
         return 2
 
+    signatures: Dict[str, bytes] = {}
+    presets = args.preset or ["aes_sbox"]
+    for preset in presets:
+        signatures[f"preset:{preset}"] = PRESETS[preset]
+    if args.signature:
+        for index, value in enumerate(args.signature, start=1):
+            try:
+                signatures[f"custom:{index}"] = hex_string_to_bytes(value)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+    if args.no_signatures:
+        signatures = {}
+
     if args.ghidra_home:
         root = Path(args.ghidra_home)
         headless = root / "support" / ("analyzeHeadless.bat" if _is_windows() else "analyzeHeadless")
@@ -893,19 +907,6 @@ def cmd_hunt(args: argparse.Namespace) -> int:
         )
         return EXIT_SETUP
 
-    signatures: Dict[str, bytes] = {}
-    presets = args.preset or ["aes_sbox"]
-    for preset in presets:
-        signatures[f"preset:{preset}"] = PRESETS[preset]
-    if args.signature:
-        for index, value in enumerate(args.signature, start=1):
-            try:
-                signatures[f"custom:{index}"] = hex_string_to_bytes(value)
-            except ValueError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                return 2
-    if args.no_signatures:
-        signatures = {}
     entropy_enabled = True
     max_length = max(args.min_length, args.max_length)
     min_length = min(args.min_length, args.max_length)
