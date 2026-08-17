@@ -6,6 +6,7 @@ PAK_HEADER = struct.pack("<IIQ", PAK_MAGIC, 9, 1024) + b"\x00" * 12
 UNITY_FS = b"UnityFS\x00" + struct.pack("<I", 7) + b"2021.3.16f1\x00" + b"\x00" * 16
 UNITY_WEB = b"UnityWeb\x00" + struct.pack("<I", 6) + b"2019.4.40f1\x00" + b"\x00" * 16
 UTOC_HEADER = b"-==--==--==--==-" + b"\x00" * 16
+UNITY_SERIALIZED = b"\x00" * 8 + struct.pack("<I", 22) + b"\x00" * 16
 
 
 def test_pak():
@@ -46,4 +47,27 @@ def test_pak_by_extension_fallback():
 
 
 def test_unknown_returns_none():
+    assert detect_header(b"\x00" * 32, "random.bin") is None
+
+
+def test_unity_serialized_by_header():
+    detection = detect_header(UNITY_SERIALIZED, "sharedassets0.assets")
+    assert detection.engine == "unity"
+    assert detection.kind == "serialized"
+    assert detection.details["serialized_version"] == 22
+
+
+def test_unity_serialized_level_by_name():
+    detection = detect_header(b"\x00" * 32, "level0")
+    assert detection.engine == "unity"
+    assert detection.kind == "serialized"
+
+
+def test_unity_serialized_globalgamemanagers_by_name():
+    detection = detect_header(b"\x00" * 32, "globalgamemanagers")
+    assert detection.engine == "unity"
+    assert detection.kind == "serialized"
+
+
+def test_unity_serialized_rejects_zero_version():
     assert detect_header(b"\x00" * 32, "random.bin") is None

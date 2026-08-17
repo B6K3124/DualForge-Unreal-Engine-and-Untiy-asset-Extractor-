@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
@@ -85,7 +86,7 @@ class UnityArchive:
     def engine_version(self) -> str:
         """Best-effort engine version from the bundle/serialized header."""
         for file in self.env.files.values():
-            value = getattr(file, "version_engine", None)
+            value = getattr(file, "unity_version", None) or getattr(file, "version", None)
             if value:
                 return str(value).strip()
         return ""
@@ -93,9 +94,11 @@ class UnityArchive:
     def serialized_version(self) -> int:
         """Best-effort serialized format version (bundle header or -1)."""
         for file in self.env.files.values():
-            value = getattr(file, "version", None)
-            if isinstance(value, int):
-                return value
+            header = getattr(file, "header", None)
+            if header is not None:
+                value = getattr(header, "version", None)
+                if isinstance(value, int):
+                    return value
         return -1
 
     def set_decrypt_key(self, key: str) -> None:
@@ -105,9 +108,29 @@ class UnityArchive:
             raise UnityError(f"could not set decrypt key: {exc}") from exc
 
     def assets(self) -> Iterator[UnityAsset]:
-        for path, reader in self.env.container.items():
+        """Iterate all readable objects.
+
+        Bundles expose a name->reader container; plain serialized files
+        (`.assets`, `level*`, `globalgamemanagers`, ...) have no container,
+        so fall back to every object in the environment.
+        """
+        try:
+            container = self.env.container.items()
+            first = next(container, None)
+        except Exception:
+            first = None
+        if first is not None:
+            for path, reader in chain((first,), container):
+                yield UnityAsset(
+                    path=path,
+                    type_name=reader.type.name,
+                    byte_size=reader.byte_size,
+                    _reader=reader,
+                )
+            return
+        for reader in self.env.objects:
             yield UnityAsset(
-                path=path,
+                path=str(reader.path_id),
                 type_name=reader.type.name,
                 byte_size=reader.byte_size,
                 _reader=reader,
@@ -124,7 +147,7 @@ class UnityArchive:
 
         written: List[str] = []
         obj = asset._reader.read()
-        type_name = obj.type.name
+        type_name = asset.type_name
         chosen = fmt or (formats or {}).get(type_name) or DEFAULT_FORMATS.get(type_name, "bin")
         stem = _output_stem(out_dir, asset.path)
         if type_name == "Texture2D":

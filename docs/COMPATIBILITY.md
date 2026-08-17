@@ -25,13 +25,13 @@
 | Unreal UE4.22–4.25 | `.pak` v9 | pyuepak native | ✔ tests/test_pak.py |
 | Unreal UE4.26–4.27 | `.pak` v10 | pyuepak native | ✔ tests/test_pak.py |
 | Unreal UE5.0–5.3 | `.pak` v11 | pyuepak native | ✔ tests/test_pak.py |
-| Unreal UE5.4–5.8 | `.pak` v12 | pyuepak native | ✔ tests/test_pak.py |
+| Unreal UE5.4–5.8 | `.pak` v12 | pyuepak native | ✔ tests/test_pak.py; real game (TEKKEN 8, 20,778 files listed natively; Oodle entries require the game-shipped `oo2core_*.dll`) |
 | Unreal UE5.x | `.utoc` / `.ucas` (IoStore) | CUE4Parse-based CLI (fallback) | — |
 | Unreal | AES-256 encrypted | auto-probe: no-key → key store (`keys.json`) → default key; FModel `Global.AESKeys.json` import + opt-in sync (FortniteCentral, aes.ue4server.com) | ✔ tests/test_unlock.py |
 | Unreal | Oodle-compressed | game-shipped `oo2core_*.dll` (ctypes, never bundled/downloaded); auto-discovered in the pak's folder chain + `Binaries/`/`Engine/Binaries` subpaths | — |
 | Unreal UE5.4–5.8 | per-chunk dynamic-key encryption | detected (footer peek); native single-key reader can't, CLI fallback attempted, FModel documented for dynamic keys | — |
 | Unreal | hardcoded AES keys in game binaries | automated headless-Ghidra key hunt (`scripts/ghidra/ghidra_key_finder.py`): AES S-box signature scan + high-entropy hex-key harvest, top 32-byte candidates auto-added to the key store | ✔ tests/test_ghidra.py |
-| Unity 2019–2021 | `.unity3d` / `.bundle` / `.assets` | UnityPy | — |
+| Unity 2019–2021 | `.unity3d` / `.bundle` / `.assets` | UnityPy | ✔ verified on real games (Raft 2021.3, CarX, Tabletop Simulator) |
 | Unity 2022.3 LTS | UnityFS v3, LZ4/LZ4HC blocks | UnityPy | — |
 | Unity 6 (6000.x, 6.3 LTS) | UnityFS, newer serialized formats | UnityPy + typetree fallback for undecodable objects | — |
 | Unity | CN decrypt keys | `UnityPy.set_assetbundle_decrypt_key` | — |

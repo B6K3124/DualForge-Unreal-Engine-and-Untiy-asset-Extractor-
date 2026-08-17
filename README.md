@@ -13,7 +13,7 @@
 
 ## Features
 
-- **Automatic format detection** — scans magic bytes to identify `.pak`, `.utoc`/`.ucas` (Unreal) and `UnityFS`/`UnityWeb`/`UnityRaw` bundles (Unity); no manual configuration.
+- **Automatic format detection** — scans magic bytes to identify `.pak`, `.utoc`/`.ucas` (Unreal) and `UnityFS`/`UnityWeb`/`UnityRaw` bundles and serialized files (`.assets`, `level0`, `globalgamemanagers`) (Unity); no manual configuration.
 - **Native Unreal `.pak` support** — reads pak indices directly with `pyuepak` (zero external tools). Oodle-compressed archives use the game-shipped `oo2core_*.dll`, discovered automatically in the pak's own folder chain (`Binaries/Win64`, `Engine/Binaries`, ...), then `~/.dualforge`/PATH; the DLL is never bundled or downloaded. IoStore (`.utoc`/`.ucas`) and parser edge cases fall back to the CUE4Parse CLI.
 - **Universal decompression core** — one unified `decompress()` API over zlib, gzip, bz2, lzma, LZ4/LZ4HC, Zstandard, Brotli, snappy, zip and 7z, with automatic magic sniffing and nested-container recursion.
 - **Oodle support** — loads the game-shipped `oo2core_*.dll` via ctypes (`OodleLZ_Decompress`). The DLL is never bundled with DualForge.

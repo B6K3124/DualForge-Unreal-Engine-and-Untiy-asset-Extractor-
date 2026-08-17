@@ -10,6 +10,16 @@ from dualforge.compression import sniff
 PAK_MAGIC = 0x5A6F12E1
 UTOC_MAGIC = b"-==--==--==--==-"
 UNITY_SIGNATURES = (b"UnityFS", b"UnityWeb", b"UnityRaw")
+UNITY_SERIALIZED_VERSION_MIN = 13
+UNITY_SERIALIZED_VERSION_MAX = 25
+UNITY_SERIALIZED_NAMES = frozenset(
+    {
+        "globalgamemanagers",
+        "globalgamemanagers.assets",
+        "maindata",
+        "data.unity3d",
+    }
+)
 
 
 @dataclass
@@ -56,10 +66,45 @@ def detect_header(header: bytes, filename: str, path: str = "") -> Optional[Dete
             return _detect_unity(header, sig, filename, path)
     if lower.endswith(".unity3d") or lower.endswith(".bundle") or lower.endswith(".assetbundle"):
         return Detection(engine="unity", kind="bundle", path=path)
+    if _is_unity_serialized_header(header):
+        return _detect_unity_serialized(header, path)
+    if _is_unity_serialized_name(filename):
+        return Detection(engine="unity", kind="serialized", path=path)
     compressed = sniff(header)
     if compressed:
         return Detection(engine="container", kind=compressed, path=path)
     return None
+
+
+def _is_unity_serialized_header(header: bytes) -> bool:
+    """Unity serialized files have no magic bytes.
+
+    The header is: metadata_size u32, file_size u32, serialized version u32,
+    data_offset u32. In practice the first two are zero and the version sits
+    in a narrow range, which reliably separates them from random data.
+    """
+    if len(header) < 16:
+        return False
+    if header[:8] != b"\x00" * 8:
+        return False
+    version = struct.unpack_from("<I", header, 8)[0]
+    return UNITY_SERIALIZED_VERSION_MIN <= version <= UNITY_SERIALIZED_VERSION_MAX
+
+
+def _is_unity_serialized_name(filename: str) -> bool:
+    base = Path(filename).name.lower()
+    if base in UNITY_SERIALIZED_NAMES:
+        return True
+    if base.endswith(".assets"):
+        return True
+    return base.startswith("level") and base[5:].isdigit()
+
+
+def _detect_unity_serialized(header: bytes, path: str) -> Detection:
+    details = {}
+    if len(header) >= 12:
+        details["serialized_version"] = struct.unpack_from("<I", header, 8)[0]
+    return Detection(engine="unity", kind="serialized", path=path, details=details)
 
 
 def _detect_unity(header: bytes, sig: bytes, filename: str, path: str) -> Detection:
