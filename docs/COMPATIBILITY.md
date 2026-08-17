@@ -1,0 +1,88 @@
+# DualForge — Compatibility & Integration Plan
+
+## Architecture
+
+```
+[ PySide6 GUI / CLI ]                 main.py, dualforge/ui, dualforge/cli
+        |
+[ Engine Router / Detector ]          dualforge/detector  (magic bytes)
+        |
+   +----+----+
+   |         |
+[ Unity ] [ Unreal ]                  dualforge/unity, dualforge/unreal
+   |         |
+[ Decompression Core ]                dualforge/compression (zlib/gzip/bz2/lzma/
+                                       lz4/zstd/brotli/oodle-ctypes/7z)
+[ Export / Audio ]                    dualforge/export, dualforge/audio
+[ Key Store + Sync ]                  dualforge/unreal/keys.py
+```
+
+## Compatibility matrix
+
+| Target | Format | Backend | Verified |
+| --- | --- | --- | --- |
+| Unreal UE4.17–4.21 | `.pak` v8B | pyuepak native (no tools) | ✔ tests/test_pak.py |
+| Unreal UE4.22–4.25 | `.pak` v9 | pyuepak native | ✔ tests/test_pak.py |
+| Unreal UE4.26–4.27 | `.pak` v10 | pyuepak native | ✔ tests/test_pak.py |
+| Unreal UE5.0–5.3 | `.pak` v11 | pyuepak native | ✔ tests/test_pak.py |
+| Unreal UE5.4–5.8 | `.pak` v12 | pyuepak native | ✔ tests/test_pak.py |
+| Unreal UE5.x | `.utoc` / `.ucas` (IoStore) | CUE4Parse-based CLI (fallback) | — |
+| Unreal | AES-256 encrypted | auto-probe: no-key → key store (`keys.json`) → default key; FModel `Global.AESKeys.json` import + opt-in sync (FortniteCentral, aes.ue4server.com) | ✔ tests/test_unlock.py |
+| Unreal | Oodle-compressed | game-shipped `oo2core_*.dll` (ctypes, never bundled/downloaded); auto-discovered in the pak's folder chain + `Binaries/`/`Engine/Binaries` subpaths | — |
+| Unreal UE5.4–5.8 | per-chunk dynamic-key encryption | detected (footer peek); native single-key reader can't, CLI fallback attempted, FModel documented for dynamic keys | — |
+| Unreal | hardcoded AES keys in game binaries | automated headless-Ghidra key hunt (`scripts/ghidra/ghidra_key_finder.py`): AES S-box signature scan + high-entropy hex-key harvest, top 32-byte candidates auto-added to the key store | ✔ tests/test_ghidra.py |
+| Unity 2019–2021 | `.unity3d` / `.bundle` / `.assets` | UnityPy | — |
+| Unity 2022.3 LTS | UnityFS v3, LZ4/LZ4HC blocks | UnityPy | — |
+| Unity 6 (6000.x, 6.3 LTS) | UnityFS, newer serialized formats | UnityPy + typetree fallback for undecodable objects | — |
+| Unity | CN decrypt keys | `UnityPy.set_assetbundle_decrypt_key` | — |
+| Unity | `.resS` / `.resource` / `.split*` sibling streams | eager pre-load into the UnityPy environment (`UnityArchive.load_sibling_streams`) | ✔ tests/test_unlock.py |
+| Audio (any) | WEM/FSB/OGG/XMA/ADPCM/... | vgmstream (subprocess), `.wem`-style preview sniffing | — |
+| Containers | zip / 7z / gzip / zstd / lz4 / lzma | dualforge/compression | — |
+
+Engine versions are surfaced in the GUI (properties + preview meta: "Unity version", "Serialized format"; native pak version on the badge). Assets whose serialized format is too new for UnityPy to decode fall back to a type-tree JSON read instead of failing the preview, and per-asset extraction errors are isolated so one bad asset never aborts the run.
+
+## External dependencies
+
+| Dependency     | Purpose                      | License              |
+| -------------- | ---------------------------- | -------------------- |
+| PySide6        | GUI                          | LGPL-3.0 (free for commercial use) |
+| UnityPy 1.25+  | Unity parsing/export         | MIT                  |
+| numpy / Pillow | UnityPy texture pipeline     | BSD / HPND          |
+| lz4 / zstandard / brotli / py7zr | codecs      | BSD-3 / BSD / MIT / LGPL-2.1 |
+| CUE4Parse-based CLI | Unreal parsing (e.g. `uex`, .NET 10) | MIT / Apache-2.0 |
+
+> **Unreal backend note (2026-08):** the original `CUE4ParseCLI` project is archived and the PyPI
+> package `cue4parse` is broken (import fails out of the box). DualForge's `UnrealBridge` is a
+> generic subprocess wrapper — it works with any CUE4Parse-based CLI exposing `list`/`extract`
+> (set `DUALFORGE_CUE4PARSE` or configure in Settings). The maintained successor
+> [**uex**](https://github.com/arkive-games/uex) (Apache-2.0) is the recommended binary; its
+> profile-based `export` layout differs from the raw-file layout DualForge expects, so a thin
+> adapter (`dualforge/unreal/uex_adapter.py`) is a planned follow-up.
+
+| vgmstream      | audio conversion             | (verify before distribution) |
+| oo2core_*.dll  | Oodle decompression          | RAD proprietary (never bundled) |
+
+## Monetization & licensing decisions
+
+1. **PySide6 (LGPL)** instead of PyQt6 (GPL) — selling a closed-source build is
+   free and legal with PySide6.
+2. **No GPL Python Oodle bindings** — would contaminate the closed-source build.
+   Oodle via ctypes on game-shipped DLL, or inside CUE4Parse.
+3. **Key sync is opt-in** — memory-dump key scanning (README idea) is out of scope;
+   manual entry + community endpoints only. The automated Ghidra key hunt is opt-in,
+   local, and runs entirely on the user's own machine; it only ever writes candidate
+   keys into the user's local `~/.dualforge/keys.json`.
+4. `.NET 8` runtime is required for the Unreal path; the Unity path and
+   decompression core work without it.
+
+## Build phases
+
+1. Scaffold + core codecs + detector         (done)
+2. Unity module + export                     (done, v0.1)
+3. Unreal bridge + key store                 (done, v0.1)
+4. GUI + CLI parity                          (done, v0.1)
+5. Native pak (pyuepak), tree/checkbox UI, formats, folder mode, profiles, stats, packaging (done)
+6. Engine-era verification matrix UE4.27–UE5.8 / Unity 2022.3 LTS + Unity 6 (done)
+7. Max-asset unlock: key auto-probe, game-folder Oodle discovery, FModel key import + multi-endpoint sync, UE5.4+ chunk-key detection/routing, Unity .resS streams, profile key binding (done)
+8. Automated Ghidra key hunt: headless `analyzeHeadless` lifecycle + ghidra_bridge, AES S-box signature scan, entropy key harvest, keystore auto-add (done)
+9. Licensing audit + EULA (next)

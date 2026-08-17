@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from dualforge.export.convert import (
+    DEFAULT_FORMATS,
+    format_choices,
+    normalize_format,
+    save_mesh,
+    save_text,
+    save_texture,
+)
+
+
+def test_normalize_format():
+    assert normalize_format(None) == "png"
+    assert normalize_format(".JPG") == "jpg"
+    assert normalize_format("WAV") == "wav"
+
+
+def test_format_choices():
+    assert "png" in format_choices("Texture2D")
+    assert "tga" in format_choices("Sprite")
+    assert format_choices("AudioClip") == ("wav", "ogg", "flac", "raw")
+    assert "gltf" in format_choices("Mesh")
+    assert format_choices("MonoBehaviour") == ("bin",)
+
+
+def test_default_formats():
+    assert DEFAULT_FORMATS["Texture2D"] == "png"
+    assert DEFAULT_FORMATS["AudioClip"] == "wav"
+    assert DEFAULT_FORMATS["Mesh"] == "obj"
+
+
+def test_save_texture_png_jpg(tmp_path: Path):
+    from PIL import Image
+
+    image = Image.new("RGBA", (8, 8), (200, 30, 40, 255))
+    png = save_texture(image, tmp_path / "tex", "png")
+    assert Path(png).suffix == ".png"
+    assert Image.open(png).size == (8, 8)
+    jpg = save_texture(image, tmp_path / "tex", "jpg")
+    assert Path(jpg).suffix == ".jpg"
+    assert Image.open(jpg).mode == "RGB"
+
+
+def test_save_mesh_obj_and_gltf(tmp_path: Path):
+    obj = b"v 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nf 1/1 2/2 3/3\n"
+    obj_target = save_mesh("quad", obj, tmp_path / "mesh", "obj")
+    assert Path(obj_target).suffix == ".obj"
+    assert Path(obj_target).read_bytes() == obj
+
+    gltf_target = save_mesh("quad", obj, tmp_path / "mesh", "gltf")
+    assert Path(gltf_target).suffix == ".gltf"
+    doc = json.loads(Path(gltf_target).read_text(encoding="utf-8"))
+    assert doc["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"]
+
+
+def test_save_mesh_gltf_invalid_raises(tmp_path: Path):
+    with pytest.raises(ValueError):
+        save_mesh("bad", b"not an obj", tmp_path / "mesh", "gltf")
+
+
+def test_save_text(tmp_path: Path):
+    target = save_text(b"hello\n", tmp_path / "note", "txt")
+    assert Path(target).read_text(encoding="utf-8") == "hello\n"

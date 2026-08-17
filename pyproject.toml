@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dualforge"
+version = "0.2.0"
+description = "Universal Unity + Unreal game asset extraction toolkit (PySide6)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "DualForge" }]
+keywords = ["unreal", "unity", "pak", "utoc", "ucas", "asset", "extractor", "oodle", "zstd"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "PySide6>=6.6",
+    "UnityPy>=1.25",
+    "numpy>=1.26",
+    "Pillow>=10",
+    "lz4>=4.3",
+    "zstandard>=0.22",
+    "brotli>=1.1",
+    "py7zr>=0.20",
+    "pyuepak>=0.2.8",
+]
+
+[project.optional-dependencies]
+keys = ["requests>=2.31"]
+snappy = ["python-snappy>=0.6"]
+dev = ["pytest>=8"]
+ghidra = ["ghidra-bridge>=1.0"]
+
+[project.scripts]
+dualforge = "dualforge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dualforge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
