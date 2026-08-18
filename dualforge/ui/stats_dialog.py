@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, Optional
+from typing import Dict
 
 from PySide6.QtWidgets import (
     QDialog,

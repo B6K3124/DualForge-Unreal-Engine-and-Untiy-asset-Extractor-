@@ -26,9 +26,9 @@
 | Unreal UE4.26–4.27 | `.pak` v10 | pyuepak native | ✔ tests/test_pak.py |
 | Unreal UE5.0–5.3 | `.pak` v11 | pyuepak native | ✔ tests/test_pak.py |
 | Unreal UE5.4–5.8 | `.pak` v12 | pyuepak native | ✔ tests/test_pak.py; real game (TEKKEN 8, 20,778 files listed natively; Oodle entries require the game-shipped `oo2core_*.dll`) |
-| Unreal UE5.x | `.utoc` / `.ucas` (IoStore) | CUE4Parse-based CLI (fallback) | — |
+| Unreal UE5.x | `.utoc` / `.ucas` (IoStore) | uex adapter (`dualforge/unreal/uex_adapter.py`, auto-EGame probing via `doctor`) | ✔ verified on TEKKEN 8: 279,410 files across 100 archives; raw files (.wem/.ini) extract byte-perfect (RIFF-validated); unversioned packages (`.uasset`) require a CUE4Parse mappings file — see `--usmap`/`DUALFORGE_USMAP` (same requirement as FModel; TEKKEN 8's usmap is not redistributable) |
 | Unreal | AES-256 encrypted | auto-probe: no-key → key store (`keys.json`) → default key; FModel `Global.AESKeys.json` import + opt-in sync (FortniteCentral, aes.ue4server.com) | ✔ tests/test_unlock.py |
-| Unreal | Oodle-compressed | game-shipped `oo2core_*.dll` (ctypes, never bundled/downloaded); auto-discovered in the pak's folder chain + `Binaries/`/`Engine/Binaries` subpaths | — |
+| Unreal | Oodle-compressed | game-shipped `oo2core_*.dll` (ctypes, never bundled/downloaded); auto-discovered in the pak's folder chain + `Binaries/`/`Engine/Binaries` subpaths | ✔ verified on TEKKEN 8 with the UE 5.7 engine-shipped `oo2core_9_win64.dll` (via `~/.dualforge`); texture/ini/`.wem` reads OK |
 | Unreal UE5.4–5.8 | per-chunk dynamic-key encryption | detected (footer peek); native single-key reader can't, CLI fallback attempted, FModel documented for dynamic keys | — |
 | Unreal | hardcoded AES keys in game binaries | automated headless-Ghidra key hunt (`scripts/ghidra/ghidra_key_finder.py`): AES S-box signature scan + high-entropy hex-key harvest, top 32-byte candidates auto-added to the key store | ✔ tests/test_ghidra.py |
 | Unity 2019–2021 | `.unity3d` / `.bundle` / `.assets` | UnityPy | ✔ verified on real games (Raft 2021.3, CarX, Tabletop Simulator) |
@@ -36,7 +36,7 @@
 | Unity 6 (6000.x, 6.3 LTS) | UnityFS, newer serialized formats | UnityPy + typetree fallback for undecodable objects | — |
 | Unity | CN decrypt keys | `UnityPy.set_assetbundle_decrypt_key` | — |
 | Unity | `.resS` / `.resource` / `.split*` sibling streams | eager pre-load into the UnityPy environment (`UnityArchive.load_sibling_streams`) | ✔ tests/test_unlock.py |
-| Audio (any) | WEM/FSB/OGG/XMA/ADPCM/... | vgmstream (subprocess), `.wem`-style preview sniffing | — |
+| Audio (any) | WEM/FSB/OGG/XMA/ADPCM/... | vgmstream (subprocess), `.wem`-style preview sniffing | — (raw `.wem` extraction from real paks verified on TEKKEN 8; conversion needs vgmstream, not installed) |
 | Containers | zip / 7z / gzip / zstd / lz4 / lzma | dualforge/compression | — |
 
 Engine versions are surfaced in the GUI (properties + preview meta: "Unity version", "Serialized format"; native pak version on the badge). Assets whose serialized format is too new for UnityPy to decode fall back to a type-tree JSON read instead of failing the preview, and per-asset extraction errors are isolated so one bad asset never aborts the run.
@@ -55,9 +55,15 @@ Engine versions are surfaced in the GUI (properties + preview meta: "Unity versi
 > package `cue4parse` is broken (import fails out of the box). DualForge's `UnrealBridge` is a
 > generic subprocess wrapper — it works with any CUE4Parse-based CLI exposing `list`/`extract`
 > (set `DUALFORGE_CUE4PARSE` or configure in Settings). The maintained successor
-> [**uex**](https://github.com/arkive-games/uex) (Apache-2.0) is the recommended binary; its
-> profile-based `export` layout differs from the raw-file layout DualForge expects, so a thin
-> adapter (`dualforge/unreal/uex_adapter.py`) is a planned follow-up.
+> [**uex**](https://github.com/arkive-games/uex) (Apache-2.0) is the recommended binary; it is
+> auto-discovered in `~/.dualforge` (e.g. an extracted `uex` release folder) and handled by a
+> dedicated adapter (`dualforge/unreal/uex_adapter.py`) that generates a throwaway
+> `profiles.json` per invocation, auto-probes the CUE4Parse `EGame` via `uex doctor` (folder
+> hints first — TEKKEN 7/Fortnite/Palworld/Tarkov/Valorant — then pak footer version, then
+> LATEST fallbacks), and converts FModel-style export trees into DualForge's raw layout.
+> On first mount uex downloads its Oodle/zlib natives into `.uex-cache` next to the exe
+> (requires network; the user's own `oo2core_*.dll` in `~/.dualforge` is picked up by the
+> native pak path instead).
 
 | vgmstream      | audio conversion             | (verify before distribution) |
 | oo2core_*.dll  | Oodle decompression          | RAD proprietary (never bundled) |

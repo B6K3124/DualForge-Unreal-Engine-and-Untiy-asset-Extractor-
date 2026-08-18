@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from dualforge import __version__
 from dualforge.compression import METHODS, is_available
@@ -29,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser.add_argument("-o", "--out", required=True, help="output directory")
     extract_parser.add_argument("--engine", choices=["auto", "unity", "unreal"], default="auto")
     extract_parser.add_argument("--aes", help="AES-256 key (hex) for encrypted Unreal archives")
+    extract_parser.add_argument(
+        "--usmap",
+        help="CUE4Parse mappings file (.usmap) for unversioned UE5 packages; "
+        "auto-detected from DUALFORGE_USMAP, ~/.dualforge or the game folder",
+    )
     extract_parser.add_argument(
         "--types", nargs="*", help="Unity object types to export, e.g. Texture2D AudioClip"
     )
@@ -88,6 +92,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         type_filter=tuple(args.types) if args.types else None,
         files=args.files,
         formats=formats,
+        usmap=args.usmap,
         progress=lambda i, t, m: print(f"[{i + 1}/{t}] {m}", file=sys.stderr),
     )
     try:

@@ -88,7 +88,8 @@ pip install -e ".[snappy]"  # snappy codec support
 
 | Tool | Needed for | Setup |
 |---|---|---|
-| **CUE4Parse-based CLI** | Unreal IoStore (`.utoc`/`.ucas`) & pak fallback | Point *Settings* or `DUALFORGE_CUE4PARSE` at a CLI built on CUE4Parse. The original `CUE4ParseCLI` is archived; the maintained successor is [**uex**](https://github.com/arkive-games/uex) (Apache-2.0, `.NET 10`, FModel-compatible). Note: the PyPI package `cue4parse` is currently broken and should **not** be installed. |
+| **CUE4Parse-based CLI** | Unreal IoStore (`.utoc`/`.ucas`) & pak fallback | Drop the maintained [**uex**](https://github.com/arkive-games/uex) release folder (Apache-2.0, `.NET 10`, FModel-compatible) into `~/.dualforge` — DualForge auto-discovers `uex.exe` — or point *Settings* / `DUALFORGE_CUE4PARSE` at it. The original `CUE4ParseCLI` is archived and the PyPI package `cue4parse` is broken (do **not** install it). On first use uex downloads its Oodle/zlib natives into `.uex-cache` (needs network). |
+| **USMap (mappings)** | Parsing unversioned UE5 packages (`.uasset`), e.g. TEKKEN 8 / Dragon Ball: Sparking! ZERO | Required for games that ship unversioned packages (same as FModel). Place the game's `.usmap` in `~/.dualforge`, the game folder, or pass `--usmap` / set `DUALFORGE_USMAP`. Raw files (`.wem`, `.ini`, ...) extract without it. |
 | **vgmstream** | Exotic audio format conversion (`.wem`, `.fsb`, ...) and FLAC export | Optional; set path in *Settings* or `DUALFORGE_VGMSTREAM` |
 | **Oodle DLL** | Oodle-compressed Unreal packs | Discovered automatically: the pak's own folder chain (`Binaries/Win64`, `Engine/Binaries/Win64`, ...), then the working directory, `~/.dualforge`, and `PATH`. Never bundled or downloaded |
 
@@ -141,6 +142,12 @@ python main.py keys list
 
 # Import an FModel Global.AESKeys.json key file
 python main.py keys import "C:\FModel\Output\Global.AESKeys.json"
+
+# Extract raw files from a TEKKEN 8 IoStore (no mappings needed)
+python main.py extract "TEKKEN 8\Polaris\Content\Paks\pakchunk101-Windows.utoc" -o out --files Polaris/Content/WwiseAudio/Media/100011496.wem
+
+# Extract packages from an unversioned UE5 game with a mappings file
+python main.py extract "game\Content\Paks\pakchunk0-Windows.utoc" -o out --usmap "C:\mappings\game.usmap"
 
 # Opt-in sync from community key endpoints
 python main.py keys sync

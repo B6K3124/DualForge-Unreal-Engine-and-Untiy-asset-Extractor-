@@ -40,7 +40,7 @@ def build_pe(key_hex: str, sbox: bytes) -> bytes:
 
     dos = b"MZ" + b"\x00" * 58 + struct.pack("<I", 0x40)
     coff_offset = 0x40
-    opt_offset = coff_offset + 4 + 20
+    opt_offset = coff_offset + 4 + 20  # noqa: F841 - kept for readability of the layout
 
     machine = 0x8664
     n_sections = 2

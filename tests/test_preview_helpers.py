@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import wave
 from pathlib import Path
@@ -90,7 +89,7 @@ def test_make_hex_truncates():
 
 def test_wav_peaks(tmp_path, qapp):
     wav_path = str(tmp_path / "tone.wav")
-    frames = _sine_wav(wav_path)
+    _sine_wav(wav_path)
     peaks, duration, rate, channels = wav_peaks(wav_path, bins=64)
     assert peaks.shape == (64, 2)
     assert duration == pytest.approx(0.1, abs=0.001)

@@ -424,7 +424,7 @@ def prepare_server_scripts(work_dir: Path) -> Optional[str]:
     """
     try:
         import jfx_bridge
-        import ghidra_bridge
+        import ghidra_bridge  # noqa: F401 - import availability probe
     except ImportError:
         return "ghidra_bridge/jfx_bridge not installed (pip install ghidra-bridge)"
     jfx_dir = Path(jfx_bridge.__file__).resolve().parent

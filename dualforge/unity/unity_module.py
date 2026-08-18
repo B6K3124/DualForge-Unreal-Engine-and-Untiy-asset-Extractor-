@@ -143,7 +143,7 @@ class UnityArchive:
         fmt: Optional[str] = None,
         formats: Optional[Dict[str, str]] = None,
     ) -> List[str]:
-        from dualforge.export.convert import DEFAULT_FORMATS, save_mesh, save_text, save_texture
+        from dualforge.export.convert import DEFAULT_FORMATS, save_text, save_texture
 
         written: List[str] = []
         obj = asset._reader.read()
@@ -163,12 +163,7 @@ class UnityArchive:
         elif type_name == "AudioClip":
             written.append(_export_audio(obj, out_dir, asset.path, chosen))
         elif type_name == "Mesh":
-            try:
-                from UnityPy.helpers import MeshExporter
-            except ImportError as exc:
-                raise UnityError("Mesh export requires UnityPy.helpers") from exc
-            name, data = MeshExporter.export_obj(obj)
-            written.append(save_mesh(name, data, stem, chosen))
+            written.append(_export_mesh(obj, out_dir, asset.path, chosen))
         elif type_name == "TextAsset":
             data = obj.m_Script
             if isinstance(data, str):
@@ -186,11 +181,44 @@ class UnityArchive:
         return written
 
 
+def _mesh_to_obj(name: str, verts, tris, uvs) -> bytes:
+    lines = [f"o {name or 'mesh'}"]
+    for vertex in verts:
+        x, y, z = vertex[0], vertex[1], vertex[2] if len(vertex) > 2 else 0.0
+        lines.append(f"v {x} {y} {z}")
+    if uvs:
+        for uv in uvs:
+            u, v = uv[0], uv[1] if len(uv) > 1 else 0.0
+            lines.append(f"vt {u} {v}")
+    for submesh in tris:
+        for tri in submesh:
+            if uvs:
+                lines.append("f " + " ".join(f"{i + 1}/{i + 1}" for i in tri))
+            else:
+                lines.append("f " + " ".join(str(i + 1) for i in tri))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _export_mesh(obj, out_dir: str, asset_path: str, fmt: str) -> str:
+    from dualforge.export.convert import save_mesh
+    from UnityPy.helpers import MeshHelper
+
+    handler = MeshHelper.MeshHandler(obj)
+    handler.process()
+    name = str(getattr(obj, "m_Name", "") or "").strip()
+    verts = handler.m_Vertices
+    tris = handler.get_triangles()
+    if not verts or not any(tris):
+        raise UnityError(f"mesh has no decodable geometry: {asset_path}")
+    uvs = handler.m_UV0 or []
+    data = _mesh_to_obj(name, verts, tris, uvs)
+    stem = _output_stem(out_dir, asset_path)
+    return save_mesh(name or "mesh", data, stem, fmt)
+
+
 def _export_audio(obj, out_dir: str, asset_path: str, fmt: str) -> str:
-    try:
-        from UnityPy.helpers import AudioClipConverter
-    except ImportError as exc:
-        raise UnityError("Audio export requires UnityPy.helpers") from exc
+    from UnityPy.export import AudioClipConverter
+
     stem = _output_stem(out_dir, asset_path)
     fmt = fmt.lower().lstrip(".")
     if fmt == "raw":
@@ -198,40 +226,29 @@ def _export_audio(obj, out_dir: str, asset_path: str, fmt: str) -> str:
         if raw is None:
             raw = getattr(obj, "raw_data", None)
         if raw:
-            return _write_bytes(stem.with_suffix(".audio"), raw)
+            return _write_bytes(stem.with_suffix(".audio"), bytes(raw))
         raise UnityError("audio has no raw data to export")
     try:
-        data = AudioClipConverter.export_wav(obj)
-        target = _write_bytes(stem.with_suffix(".wav"), data)
-    except Exception as wav_exc:
-        try:
-            data = AudioClipConverter.export_ogg(obj)
-            target = _write_bytes(stem.with_suffix(".ogg"), data)
-            if fmt == "ogg":
-                return target
-        except Exception as ogg_exc:
-            raw = getattr(obj, "m_AudioData", None) or getattr(obj, "raw_data", None)
-            if raw:
-                return _write_bytes(stem.with_suffix(".audio"), raw)
-            raise UnityError(f"audio export failed (wav: {wav_exc}, ogg: {ogg_exc})") from wav_exc
-        raise UnityError(f"wav export failed: {wav_exc}") from wav_exc
-    if fmt in {"wav", "ogg"}:
-        if fmt == "ogg":
-            try:
-                data = AudioClipConverter.export_ogg(obj)
-                return _write_bytes(stem.with_suffix(".ogg"), data)
-            except Exception as ogg_exc:
-                raise UnityError(f"ogg export failed: {ogg_exc}") from ogg_exc
-        return target
+        samples = AudioClipConverter.extract_audioclip_samples(obj)
+    except Exception as exc:
+        raw = getattr(obj, "m_AudioData", None) or getattr(obj, "raw_data", None)
+        if raw:
+            return _write_bytes(stem.with_suffix(".audio"), bytes(raw))
+        raise UnityError(f"audio export failed: {exc}") from exc
+    if not samples:
+        raise UnityError("audio clip produced no samples")
+    name, data = next(iter(samples.items()))
+    if fmt in {"wav", "ogg"} and Path(name).suffix.lower() == f".{fmt}":
+        return _write_bytes(stem.with_suffix(f".{fmt}"), data)
     if fmt == "flac":
         try:
             from dualforge.audio import Vgmstream
 
-            converted = Vgmstream().convert(target, str(stem.with_suffix(".flac")), "flac")
-            return converted
+            source = _write_bytes(stem.with_suffix(Path(name).suffix or ".wav"), data)
+            return Vgmstream().convert(source, str(stem.with_suffix(".flac")), "flac")
         except Exception as exc:
             raise UnityError(f"flac export requires vgmstream: {exc}") from exc
-    raise UnityError(f"unsupported audio format: {fmt}")
+    return _write_bytes(stem.with_suffix(Path(name).suffix or ".wav"), data)
 
 
 def _sanitize_name(name: str) -> str:

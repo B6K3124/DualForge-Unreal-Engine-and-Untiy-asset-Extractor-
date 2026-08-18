@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from dualforge.unreal.keys import KeyStore
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = _REPO_ROOT / "scripts" / "ghidra" / "ghidra_key_finder.py"

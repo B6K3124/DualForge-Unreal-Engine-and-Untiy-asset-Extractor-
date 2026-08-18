@@ -67,3 +67,39 @@ def test_save_mesh_gltf_invalid_raises(tmp_path: Path):
 def test_save_text(tmp_path: Path):
     target = save_text(b"hello\n", tmp_path / "note", "txt")
     assert Path(target).read_text(encoding="utf-8") == "hello\n"
+
+
+def test_mesh_to_obj_with_uvs():
+    from dualforge.unity.unity_module import _mesh_to_obj
+
+    obj = _mesh_to_obj(
+        "quad",
+        [(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+        [[(0, 1, 2)]],
+        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)],
+    ).decode("utf-8")
+    assert obj.startswith("o quad")
+    assert "v 0 0 0" in obj
+    assert "vt 1.0 0.0" in obj
+    assert "f 1/1 2/2 3/3" in obj
+
+
+def test_mesh_to_obj_without_uvs():
+    from dualforge.unity.unity_module import _mesh_to_obj
+
+    obj = _mesh_to_obj("tri", [(0, 0, 0), (1, 0, 0), (0, 1, 0)], [[(0, 1, 2)]], []).decode("utf-8")
+    assert "vt" not in obj
+    assert "f 1 2 3" in obj
+
+
+def test_mesh_to_obj_multi_component_uvs():
+    from dualforge.unity.unity_module import _mesh_to_obj
+
+    obj = _mesh_to_obj(
+        "m",
+        [(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+        [[(0, 1, 2)]],
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)],
+    ).decode("utf-8")
+    assert "vt 0.0 0.0" in obj
+    assert "vt 1.0 1.0" in obj

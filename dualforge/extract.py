@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
-from dualforge.compression import CompressionError, decompress, sniff
+from dualforge.compression import CompressionError, decompress
 from dualforge.detector import Detection, detect, detect_header
 from dualforge.export import Exporter
 from dualforge.unity import UnityArchive, UnityError
@@ -37,6 +37,7 @@ class ExtractOptions:
     type_filter: Optional[Tuple[str, ...]] = None
     files: Optional[List[str]] = None
     formats: Optional[dict] = None
+    usmap: Optional[str] = None
     progress: Optional[Progress] = None
     is_cancelled: Optional[Cancel] = None
 
@@ -66,7 +67,6 @@ def _extract_unity(path: str, detection: Detection, options: ExtractOptions, res
     archive = UnityArchive(path)
     if options.aes_key:
         archive.set_decrypt_key(options.aes_key)
-    exporter = Exporter(options.out_dir)
     assets = [a for a in archive.assets()]
     if options.type_filter:
         assets = [a for a in assets if a.type_name in options.type_filter]
@@ -132,8 +132,15 @@ def _extract_unreal_native(path: str, options: ExtractOptions, result: ExtractRe
 
 
 def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractResult) -> None:
+    from pathlib import Path
+
     bridge = UnrealBridge()
-    entries = bridge.list_files(path, aes_key=options.aes_key)
+    usmap = options.usmap
+    if not usmap:
+        from dualforge.unreal.uex_adapter import find_usmap
+
+        usmap = find_usmap(str(Path(path).parent))
+    entries = bridge.list_files(path, aes_key=options.aes_key, usmap=usmap)
     if options.files:
         entries = [e for e in entries if e.get("path") in set(options.files)]
     total = len(entries)
@@ -141,7 +148,13 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
         _report(options, index, total, str(entry.get("path", entry)))
     if entries:
         try:
-            count = bridge.extract(path, options.out_dir, aes_key=options.aes_key)
+            count = bridge.extract(
+                path,
+                options.out_dir,
+                aes_key=options.aes_key,
+                files=[str(entry.get("path", "")) for entry in entries],
+                usmap=usmap,
+            )
         except UnrealError as exc:
             result.errors.append(f"{exc}{_chunk_key_hint(path)}")
             return
@@ -184,7 +197,6 @@ def _extract_container(path: str, detection: Detection, options: ExtractOptions,
 
 
 def _write_temp(data: bytes, kind: str) -> str:
-    from pathlib import Path
     import tempfile
 
     suffix = ".pak" if kind == "pak" else ".bundle"

@@ -28,6 +28,7 @@ class Settings:
     theme: str = "dark"
     default_out_dir: str = ""
     cue4parse_path: str = ""
+    usmap_path: str = ""
     vgmstream_path: str = ""
     preview_cache_dir: str = ""
     default_aes_key: str = ""
@@ -103,6 +104,8 @@ class SettingsDialog(QDialog):
 
         self.cue4parse_edit = self._path_field(settings.cue4parse_path, is_dir=False)
         form.addRow("CUE4Parse CLI (uex)", self.cue4parse_edit)
+        self.usmap_edit = self._path_field(settings.usmap_path, is_dir=False)
+        form.addRow("USMap (UE5 packages)", self.usmap_edit)
 
         self.vgmstream_edit = self._path_field(settings.vgmstream_path, is_dir=False)
         form.addRow("vgmstream", self.vgmstream_edit)
@@ -207,11 +210,11 @@ class SettingsDialog(QDialog):
         return row
 
     def values(self) -> Settings:
-        from dualforge.ui.theme import available_themes
 
         self.settings.theme = self.theme_combo.currentData()
         self.settings.default_out_dir = self.out_dir_edit.itemAt(0).widget().text().strip()
         self.settings.cue4parse_path = self.cue4parse_edit.itemAt(0).widget().text().strip()
+        self.settings.usmap_path = self.usmap_edit.itemAt(0).widget().text().strip()
         self.settings.vgmstream_path = self.vgmstream_edit.itemAt(0).widget().text().strip()
         self.settings.preview_cache_dir = self.cache_edit.itemAt(0).widget().text().strip()
         self.settings.default_aes_key = self.aes_edit.text().strip()

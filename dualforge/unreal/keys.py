@@ -139,9 +139,9 @@ class KeyStore:
             if not isinstance(value, dict):
                 continue
             main_key = ""
-            for field in ("mainKey", "main_key", "aes_key", "key"):
-                if value.get(field):
-                    main_key = str(value[field])
+            for candidate in ("mainKey", "main_key", "aes_key", "key"):
+                if value.get(candidate):
+                    main_key = str(value[candidate])
                     break
             dynamic = value.get("dynamicKeys") or value.get("dynamic_keys") or {}
             if not main_key:

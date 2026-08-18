@@ -165,6 +165,8 @@ def test_find_game_oodle_next_to_archive(tmp_path: Path, monkeypatch):
     archive = game / "Content" / "Paks" / "game.pak"
 
     monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     found = _find_game_oodle(str(archive))
     assert found is not None
@@ -174,6 +176,8 @@ def test_find_game_oodle_next_to_archive(tmp_path: Path, monkeypatch):
 def test_find_game_oodle_absent(tmp_path: Path, monkeypatch):
     archive = tmp_path / "game" / "Content" / "Paks" / "game.pak"
     monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     assert _find_game_oodle(str(archive)) is None
 

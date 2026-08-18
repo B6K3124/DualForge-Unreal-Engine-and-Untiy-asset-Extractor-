@@ -75,6 +75,7 @@ class ExtractWorker(QThread):
         types: Optional[List[str]],
         files_by_archive: Dict[str, Optional[List[str]]],
         formats: Optional[dict],
+        usmap: Optional[str] = None,
     ):
         super().__init__()
         self.paths = paths
@@ -83,6 +84,7 @@ class ExtractWorker(QThread):
         self.types = types
         self.files_by_archive = files_by_archive
         self.formats = formats
+        self.usmap = usmap
         self._signals = WorkerSignals()
         self.progress = self._signals.progress
         self.finished = self._signals.finished
@@ -107,6 +109,7 @@ class ExtractWorker(QThread):
                 type_filter=tuple(self.types) if self.types else None,
                 files=files,
                 formats=self.formats,
+                usmap=self.usmap,
                 progress=lambda i, t, m, _d=done: self.progress.emit(_d + i, max(total, 1), m),
                 is_cancelled=self._cancel_event.is_set,
             )
@@ -945,6 +948,7 @@ class MainWindow(QMainWindow):
             types,
             groups,
             self.settings.export_formats,
+            self.settings.usmap_path or None,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
@@ -1031,7 +1035,7 @@ class MainWindow(QMainWindow):
         add_btn.setProperty("role", "primary")
         remove_btn = buttons.addButton("Remove", QDialogButtonBox.ButtonRole.ActionRole)
         remove_btn.setProperty("role", "danger")
-        close_btn = buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.addButton("Close", QDialogButtonBox.ButtonRole.RejectRole)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
 

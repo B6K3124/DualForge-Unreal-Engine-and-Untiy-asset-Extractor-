@@ -22,8 +22,13 @@ class UnrealBridge:
     def _cmd(self, args: List[str]) -> List[str]:
         return [self.cli_path] + args
 
-    def list_files(self, pak: str, aes_key: Optional[str] = None) -> List[Dict[str, object]]:
+    def list_files(
+        self, pak: str, aes_key: Optional[str] = None, usmap: Optional[str] = None
+    ) -> List[Dict[str, object]]:
         self._require()
+        uex = self._uex_adapter()
+        if uex is not None:
+            return uex.list_files(pak, aes_key, usmap)
         args = ["list", "--json", pak]
         if aes_key:
             args += ["--aes", aes_key]
@@ -36,8 +41,12 @@ class UnrealBridge:
         out_dir: str,
         aes_key: Optional[str] = None,
         files: Optional[List[str]] = None,
+        usmap: Optional[str] = None,
     ) -> int:
         self._require()
+        uex = self._uex_adapter()
+        if uex is not None:
+            return uex.extract(pak, out_dir, aes_key, files, usmap)
         args = ["extract", pak, "-o", out_dir]
         if aes_key:
             args += ["--aes", aes_key]
@@ -54,6 +63,17 @@ class UnrealBridge:
                 "Apache-2.0, requires the .NET runtime). The PyPI package 'cue4parse' is broken; "
                 "do not install it."
             )
+
+    def _uex_adapter(self):
+        """Route to the uex adapter when the configured CLI is uex itself."""
+        if not self.cli_path:
+            return None
+        from dualforge.unreal.uex_adapter import UexAdapter
+
+        name = Path(self.cli_path).name.lower()
+        if name.startswith("uex"):
+            return UexAdapter(self.cli_path)
+        return None
 
     def _run(self, args: List[str]) -> str:
         try:
@@ -79,7 +99,7 @@ def _find_cli() -> Optional[str]:
     env = os.environ.get("DUALFORGE_CUE4PARSE")
     if env and Path(env).is_file():
         return env
-    for name in ("CUE4ParseCLI", "CUE4ParseCLI.exe", "cue4parse", "uex", "uex.exe"):
+    for name in ("uex", "uex.exe", "CUE4ParseCLI", "CUE4ParseCLI.exe", "cue4parse"):
         found = shutil.which(name)
         if found:
             return found
@@ -87,6 +107,10 @@ def _find_cli() -> Optional[str]:
         for candidate in (*base.glob("CUE4ParseCLI*"), *base.glob("uex*")):
             if candidate.is_file():
                 return str(candidate)
+        if base.is_dir():
+            for candidate in base.rglob("uex.exe"):
+                if candidate.is_file():
+                    return str(candidate)
     return None
 
 

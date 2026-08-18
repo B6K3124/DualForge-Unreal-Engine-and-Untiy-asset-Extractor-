@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,

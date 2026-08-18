@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
-import threading
 import xml.dom.minidom
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from PySide6.QtCore import QObject, QThread, QUrl, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
@@ -688,7 +686,6 @@ class PreviewPanel(QStackedWidget):
 
     def _on_loaded(self, payload: dict) -> None:
         self.overlay.hide_overlay()
-        kind = payload.get("kind", "")
         meta_rows = "\n".join(f"{k}: {v}" for k, v in payload.get("meta", {}).items())
         title = payload.get("title", "")
         if "image" in payload and payload["image"] is not None:

@@ -4,7 +4,7 @@ import zlib
 
 import pytest
 
-from dualforge.compression import METHODS, decompress, is_available, sniff
+from dualforge.compression import decompress, is_available, sniff
 
 PAYLOAD = (b"the quick brown fox jumps over the lazy dog. " * 50) + bytes(range(256))
 

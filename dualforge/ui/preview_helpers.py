@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 from pathlib import Path
 from typing import List, Optional, Tuple
 
