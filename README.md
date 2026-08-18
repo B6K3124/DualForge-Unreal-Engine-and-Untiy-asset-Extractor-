@@ -149,12 +149,28 @@ python main.py extract "TEKKEN 8\Polaris\Content\Paks\pakchunk101-Windows.utoc" 
 # Extract packages from an unversioned UE5 game with a mappings file
 python main.py extract "game\Content\Paks\pakchunk0-Windows.utoc" -o out --usmap "C:\mappings\game.usmap"
 
+# Generate a mappings file from a running Unreal Engine game (Windows, UE5 titles
+# with unversioned packages - e.g. TEKKEN 8, Dragon Ball: Sparking! ZERO)
+python main.py usmap dump --process "POLARIS-Win64-Shipping.exe" -o "%USERPROFILE%\.dualforge\TEKKEN 8.usmap"
+python main.py usmap dump --list-processes     # find the game's executable name
+python main.py usmap validate "game.usmap"     # inspect any usmap file
+python main.py usmap repack "game.usmap" -o small.usmap --compression zstd
+
 # Opt-in sync from community key endpoints
 python main.py keys sync
 
 # Show available codecs
 python main.py codecs
 ```
+
+### Generating a mappings file (`.usmap`) for Unreal Engine games
+
+Unversioned UE5 games (e.g. TEKKEN 8, Dragon Ball: Sparking! ZERO) ship packages without their property names, so extraction needs a *mappings file* that describes the game's enums and structs — the same file FModel uses. If the game does not ship one (TEKKEN 8's is not redistributable), DualForge can generate it locally from a **running instance of the game** — no internet needed, Windows only:
+
+- **GUI** — start the game, then *Tools ▸ Generate USMAP from Running Game...*: pick the game process, the output path is pre-filled to `~/.dualforge\<game>.usmap` (which DualForge finds automatically), hit *Generate USMAP*, and confirm to set it as the mappings file.
+- **CLI** — `python main.py usmap dump --process <game.exe> -o <out.usmap>` (use `--list-processes` to find the executable name, or `--pid <id>`). Generated files can be checked with `usmap validate` and recompressed with `usmap repack`.
+
+This only applies to **Unreal Engine** games — Unity titles never need a mappings file. The dump requires the game process to be running and readable (run the terminal as administrator if the game blocks access).
 
 ### Building a standalone exe
 

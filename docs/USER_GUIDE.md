@@ -74,6 +74,12 @@ right-click → **Create shortcut** and put the shortcut anywhere.
 5. Done. A `_dualforge_manifest.json` is written into the output folder listing every
    extracted file, plus any warnings.
 
+> **UE5 games with unversioned packages** (TEKKEN 8, Sparking! ZERO, ...): packages
+> (`.uasset`) only extract if a mappings file exists — either place the game's
+> `.usmap` in `~/.dualforge`, or generate one from the running game with
+> **Tools ▸ Generate USMAP from Running Game...** (see §6). Raw files (`.wem`, `.ini`,
+> ...) extract without it.
+
 > **Tip:** check the **Log** dock at the bottom — it reports format detection,
 > the AES key that unlocked an archive, and extraction warnings.
 
@@ -91,10 +97,11 @@ right-click → **Create shortcut** and put the shortcut anywhere.
 | File | Export Selected / Extract All | Extract checked assets / everything |
 | File | Manage AES Keys... | Add, remove, or sync decryption keys |
 | File | Game Profiles... | Save a game (folder + key + output) and reopen it in one click |
-| File | Settings... | Theme, paths, export formats, default key (see §6) |
+| File | Settings... | Theme, paths, export formats, default key (see §7) |
 | View | Asset Statistics... | Per-type file counts and sizes |
 | View | Theme | Switch dark / light |
 | Tools | **Ghidra Key Hunt...** | Find hardcoded AES keys in a game binary via headless Ghidra (see §5.4) |
+| Tools | **Generate USMAP from Running Game...** | Generate a mappings file (`.usmap`) from a running **Unreal Engine 5** game (see §6) |
 | Help | About DualForge | Version and info |
 
 ### Toolbar
@@ -121,7 +128,7 @@ Selecting an asset loads a preview automatically (in a background thread):
 |---|---|
 | Texture2D / Sprite | Image viewer — zoom (`+`/`-`), **Fit**, **1:1**, pan with the mouse |
 | AudioClip (Unity) | Waveform + inline **Play/Stop** with a seek bar |
-| `.wav` / `.ogg` / `.flac` and exotic Unreal audio (`.wem`, `.fsb`, …) | Same audio page — exotic formats need **vgmstream** (§6) |
+| `.wav` / `.ogg` / `.flac` and exotic Unreal audio (`.wem`, `.fsb`, …) | Same audio page — exotic formats need **vgmstream** (§7) |
 | Mesh (Unity) | 3D viewer — **Wireframe** toggle, **Reset view**, drag to orbit |
 | TextAsset | Pretty-printed JSON/XML/text viewer |
 | Anything else | Hex inspector (first 256 KB shown) |
@@ -186,13 +193,90 @@ default key tried.
 
 ---
 
-## 6. Settings reference (**File ▸ Settings**)
+## 6. Generating a USMAP file (Unreal Engine games only)
+
+Some UE5 games (e.g. TEKKEN 8, Dragon Ball: Sparking! ZERO) ship **unversioned
+packages**: their `.uasset` files omit property names, so extraction needs a
+*mappings file* (`.usmap`) describing the game's enums and structs — the same file
+FModel uses. If the game does not ship one (TEKKEN 8's is not redistributable),
+DualForge can **generate it locally from a running instance of the game** — no
+internet needed.
+
+> **This applies only to Unreal Engine games.** Unity titles never need a mappings
+> file — skip this section entirely if you are extracting Unity assets.
+
+### 6.1 From the GUI (recommended)
+
+1. **Start the game** and leave it running (it must be at least at the main menu;
+   the name table is already loaded by then).
+2. In DualForge, open **Tools ▸ Generate USMAP from Running Game...**.
+3. Pick the game process from the list (sorted by name — look for the game's
+   executable, e.g. `POLARIS-Win64-Shipping.exe`).
+4. The output path is **pre-filled** to `~/.dualforge\<game>.usmap` — that folder is
+   searched automatically, so no further configuration is needed. Change it if you
+   prefer a different location.
+5. Click **Generate USMAP** and watch the log. The dump scans the game's memory for
+   the global name table and can take a minute.
+6. When asked, click **Yes** to use the new file as the mappings file for this game
+   (this just sets *Settings ▸ USMap* for you).
+
+From then on, opening the game's `.utoc`/`.ucas` archives uses the mappings file
+automatically.
+
+### 6.2 From the command line
+
+```powershell
+# find the game's executable name
+python main.py usmap dump --list-processes
+
+# dump the name table into ~/.dualforge (auto-discovered by find_usmap)
+python main.py usmap dump --process "POLARIS-Win64-Shipping.exe" -o "%USERPROFILE%\.dualforge\TEKKEN 8.usmap"
+
+# or attach by process id instead
+python main.py usmap dump --pid 12345 -o game.usmap
+
+# verify a usmap file (any usmap, not just generated ones)
+python main.py usmap validate "game.usmap"
+
+# rebuild / recompress a usmap (zstd is the smallest; brotli is a valid alternative)
+python main.py usmap repack "game.usmap" -o small.usmap --compression zstd
+```
+
+`usmap validate` reports the name/enum/struct counts and format version;
+`usmap repack` lets you downgrade the format version or switch compression.
+The extracted package names must resolve against the same game version the dump was
+taken from — re-dump after a game update.
+
+### 6.3 Requirements and limits
+
+| Requirement / limit | Details |
+|---|---|
+| **UE5 game with unversioned packages** | UE4 games and versioned packages don't need a usmap; Unity never needs one |
+| Game must be **running** | The name table only exists in the game's memory — start the game first |
+| **Windows only** | The dump reads the game's memory via the Windows API |
+| **Administrator rights** | Needed if the game blocks memory access (most do). Run DualForge (or the terminal) **as administrator**; the error message says so explicitly |
+| Unreal Engine 5.x | Uses the UE5 global `FNamePool`; engines before UE5 store names differently |
+| Game updates | Re-dump after every game update — package names change |
+
+### 6.4 Troubleshooting the dump
+
+| Error message | What it means / what to do |
+|---|---|
+| `no running process named ...` | The game isn't running, or the executable name is wrong — use `usmap dump --list-processes` to check |
+| `FNamePool anchor not found (is this a UE5 game?)` | The process is running but is not an Unreal Engine 5 game (or you picked the wrong process) |
+| `OpenProcess failed ... (run as admin ...)` | The game blocks access — start DualForge as administrator |
+| `ReadProcessMemory failed ...` | The game's memory changed while scanning (rare) — just run the dump again |
+
+---
+
+## 7. Settings reference (**File ▸ Settings**)
 
 | Setting | Purpose |
 |---|---|
 | Theme | Dark / light |
 | Default output folder | Pre-filled destination for extraction dialogs |
 | CUE4Parse CLI (uex) | Path to the **uex** CLI — required for Unreal IoStore (`.utoc`/`.ucas`) and pak fallback. Download from [github.com/arkive-games/uex](https://github.com/arkive-games/uex) |
+| USMap (UE5 packages) | Path to a `.usmap` mappings file for unversioned UE5 packages (required for games like TEKKEN 8). Also auto-discovered in `~/.dualforge` — generate it with **Tools ▸ Generate USMAP** (§6) |
 | vgmstream | Path to `vgmstream-cli` for exotic audio (`.wem`, `.fsb`, `.vag`, …) and FLAC export. Optional |
 | Preview cache folder | Where previews are cached (default `~/.dualforge/preview_cache`) |
 | Default AES key | Key tried for every archive (besides the key store) |
@@ -207,12 +291,13 @@ default key tried.
 | Tool | Needed for | Where to configure |
 |---|---|---|
 | **uex** (CUE4Parse CLI) | `.utoc`/`.ucas` IoStore, pak fallback | Settings → CUE4Parse CLI, or env var `DUALFORGE_CUE4PARSE` |
+| **USMap** (`.usmap`) | Unversioned UE5 packages (`.uasset`) — **Unreal only** | Settings → USMap, or drop the file in `~/.dualforge`; generate with **Tools ▸ Generate USMAP from Running Game...** (§6) |
 | **vgmstream** | Exotic audio decode + FLAC export | Settings → vgmstream, or env var `DUALFORGE_VGMSTREAM` |
 | **Oodle DLL** (`oo2core_*.dll`) | Oodle-compressed paks | Found automatically in the pak's folder chain, `Binaries/`, `~/.dualforge`, `PATH` — **never bundled or downloaded** |
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause & fix |
 |---|---|
@@ -224,12 +309,16 @@ default key tried.
 | Exotic audio has no sound | Install **vgmstream** and set it in Settings; without it only WAV/OGG/FLAC preview |
 | 3D mesh viewer empty | OpenGL unavailable — the mesh page shows a message; mesh **export** still works |
 | Ghidra hunt fails | Run **Check Setup** in the dialog; install Ghidra 11.x + Java 21 and set `GHIDRA_HOME` |
+| `FNamePool anchor not found (is this a UE5 game?)` | The process is not a UE5 game, or you picked the wrong one — see §6.4 |
+| `OpenProcess failed (run as admin)` | The game blocks memory access — start DualForge as administrator |
+| USMAP dump found no game / wrong game | Start the game first, then use **Tools ▸ Generate USMAP**, or `usmap dump --list-processes` to find the exact executable name |
+| Packages still fail to export after dumping | The usmap must match the game version — re-dump after a game update |
 | Where did my files go? | The output folder you chose + `_dualforge_manifest.json` listing every file |
 | Where are settings/keys stored? | `~/.dualforge/` — `settings.json`, `keys.json`, `preview_cache/` |
 
 ---
 
-## 8. Build your own copy (from source)
+## 9. Build your own copy (from source)
 
 Requires **Python 3.10+** and **Git**.
 
@@ -264,15 +353,22 @@ prints the exact file to run. Oodle DLLs and CLI helpers are never bundled — d
 
 ---
 
-## 9. Command-line quick reference
+## 10. Command-line quick reference
 
 ```powershell
 python main.py detect "game\Content\Paks\pakchunk0-Windows.pak"   # identify a file
 python main.py extract "game_Data\sharedassets0.assets" -o out     # extract everything
 python main.py extract "game_Data\sharedassets0.assets" -o out --format jpg
+python main.py extract "game\Content\Paks\pakchunk0-Windows.utoc" -o out --usmap "C:\mappings\game.usmap"
 python main.py keys add "My Game" 0123...64hex...abc
 python main.py keys list
 python main.py keys import "C:\FModel\Output\Global.AESKeys.json"
 python main.py keys sync
 python main.py codecs
+
+# USMAP tools (Unreal Engine games only)
+python main.py usmap dump --list-processes                 # list running processes
+python main.py usmap dump --process "Game-Win64-Shipping.exe" -o "%USERPROFILE%\.dualforge\Game.usmap"
+python main.py usmap validate "game.usmap"                 # inspect a usmap file
+python main.py usmap repack "game.usmap" -o small.usmap --compression zstd
 ```

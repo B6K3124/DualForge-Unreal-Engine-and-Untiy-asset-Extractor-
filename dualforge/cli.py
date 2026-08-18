@@ -64,6 +64,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     codec_parser = sub.add_parser("codecs", help="list supported compression codecs")
     codec_parser.set_defaults(handler=_cmd_codecs)
+
+    usmap_parser = sub.add_parser("usmap", help="inspect, validate and rebuild .usmap files")
+    usmap_sub = usmap_parser.add_subparsers(dest="usmap_command", required=True)
+    usmap_validate = usmap_sub.add_parser("validate", help="parse a usmap and report its contents")
+    usmap_validate.add_argument("path", help="usmap file to parse")
+    usmap_validate.set_defaults(usmap_handler=_cmd_usmap_validate)
+    usmap_repack = usmap_sub.add_parser("repack", help="rebuild a usmap (optionally recompress)")
+    usmap_repack.add_argument("path", help="usmap file to rebuild")
+    usmap_repack.add_argument("-o", "--out", help="output file (default: <path>.rebuilt.usmap)")
+    usmap_repack.add_argument(
+        "--compression", choices=["zstd", "brotli", "none"], default="zstd",
+        help="output compression (default: zstd)",
+    )
+    usmap_repack.add_argument(
+        "--version", type=int, choices=list(range(5)), default=None,
+        help="usmap format version 0-4 (default: keep input version)",
+    )
+    usmap_repack.set_defaults(usmap_handler=_cmd_usmap_repack)
+    usmap_names = usmap_sub.add_parser("names", help="list the usmap name table")
+    usmap_names.add_argument("path", help="usmap file to inspect")
+    usmap_names.add_argument("--filter", help="only print names containing this substring")
+    usmap_names.add_argument("--count", action="store_true", help="only print the name count")
+    usmap_names.set_defaults(usmap_handler=_cmd_usmap_names)
+    usmap_dump = usmap_sub.add_parser(
+        "dump", help="dump the FNamePool of a running UE5 game into a usmap (Windows)",
+    )
+    usmap_dump.add_argument("-o", "--out", help="output usmap file")
+    usmap_dump.add_argument(
+        "--process", help="game executable name, e.g. POLARIS-Win64-Shipping",
+    )
+    usmap_dump.add_argument("--pid", type=int, help="game process id (alternative to --process)")
+    usmap_dump.add_argument(
+        "--list-processes", action="store_true", help="list running processes and exit",
+    )
+    usmap_dump.set_defaults(usmap_handler=_cmd_usmap_dump)
     return parser
 
 
@@ -161,6 +196,96 @@ def _cmd_codecs(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_usmap_validate(args: argparse.Namespace) -> int:
+    from dualforge.unreal.usmap import parse_usmap
+
+    try:
+        mappings = parse_usmap(open(args.path, "rb").read())
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"names:   {len(mappings.names)}")
+    print(f"enums:   {len(mappings.enums)}")
+    print(f"structs: {len(mappings.structs)}")
+    print(f"version: {mappings.version}")
+    print(f"versioning: {'yes' if mappings.versioning else 'no'}")
+    return 0
+
+
+def _cmd_usmap_repack(args: argparse.Namespace) -> int:
+    from dualforge.unreal.usmap import UsmapCompression, UsmapVersion, build_usmap, parse_usmap
+
+    try:
+        mappings = parse_usmap(open(args.path, "rb").read())
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    compression = {
+        "zstd": UsmapCompression.ZStandard,
+        "brotli": UsmapCompression.Brotli,
+        "none": UsmapCompression.None_,
+    }[args.compression]
+    try:
+        version = UsmapVersion(args.version) if args.version is not None else mappings.version
+        data = build_usmap(mappings, version=version, compression=compression)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    out = args.out or f"{args.path}.rebuilt.usmap"
+    open(out, "wb").write(data)
+    print(f"wrote {out} ({len(data)} bytes)")
+    return 0
+
+
+def _cmd_usmap_names(args: argparse.Namespace) -> int:
+    from dualforge.unreal.usmap import parse_usmap
+
+    try:
+        mappings = parse_usmap(open(args.path, "rb").read())
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.count:
+        print(len(mappings.names))
+        return 0
+    for name in mappings.names:
+        if not args.filter or args.filter in name:
+            print(name)
+    return 0
+
+
+def _cmd_usmap_dump(args: argparse.Namespace) -> int:
+    from dualforge.unreal.usmap_dump import (
+        UsmapDumpError,
+        dump_usmap,
+        find_process,
+        list_game_processes,
+    )
+
+    if args.list_processes:
+        for pid, exe in list_game_processes():
+            print(f"{pid}\t{exe}")
+        return 0
+    if not args.out:
+        print("error: pass -o/--out <usmap file>", file=sys.stderr)
+        return 1
+    if args.pid is None and not args.process:
+        print("error: pass --process <game.exe> or --pid <id>", file=sys.stderr)
+        return 1
+    try:
+        if args.pid is not None:
+            pid = args.pid
+        else:
+            pid, exe = find_process(args.process)
+            print(f"attaching to {exe} (pid {pid})")
+        pool = dump_usmap(pid, args.out)
+    except (UsmapDumpError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"dumped {len(pool.names)} names from {pool.block_count} blocks -> {args.out}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -170,6 +295,9 @@ def main(argv=None) -> int:
     key_handler = getattr(args, "key_handler", None)
     if key_handler:
         return key_handler(args)
+    usmap_handler = getattr(args, "usmap_handler", None)
+    if usmap_handler:
+        return usmap_handler(args)
     parser.print_help()
     return 0
 

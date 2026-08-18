@@ -194,6 +194,21 @@ def _extract_7z(data: bytes, member: Optional[str]) -> bytes:
     raise CompressionError("7z archive contains no files")
 
 
+def compress(data: bytes, method: str, level: Optional[int] = None) -> bytes:
+    """Compress with the given method (zstd/brotli only)."""
+    method = (method or "none").lower()
+    if method == "none":
+        return data
+    if method == "zstd":
+        level = level or 19
+        compressor = _zstandard().ZstdCompressor(level=level)
+        return compressor.compress(data)
+    if method == "brotli":
+        level = level or 11
+        return _brotli().compress(data, quality=level)
+    raise CompressionError(f"cannot compress with method: {method!r}")
+
+
 def sniff(data: bytes) -> Optional[str]:
     if not data:
         return None
@@ -221,5 +236,6 @@ __all__ = [
     "OodleDecompressError",
     "is_available",
     "decompress",
+    "compress",
     "sniff",
 ]

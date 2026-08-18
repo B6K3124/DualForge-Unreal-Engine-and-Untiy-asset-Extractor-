@@ -362,6 +362,12 @@ class MainWindow(QMainWindow):
         )
         ghidra_action.triggered.connect(self.open_ghidra_hunt)
         tools_menu.addAction(ghidra_action)
+        usmap_action = QAction("Generate USMAP from Running Game...", self)
+        usmap_action.setToolTip(
+            "Dump the FNamePool of a running UE5 game into a local .usmap file"
+        )
+        usmap_action.triggered.connect(self.open_usmap_dump)
+        tools_menu.addAction(usmap_action)
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("About DualForge", self)
@@ -1115,6 +1121,11 @@ class MainWindow(QMainWindow):
         from dualforge.ui.ghidra_dialog import GhidraDialog
 
         GhidraDialog(self).exec()
+
+    def open_usmap_dump(self) -> None:
+        from dualforge.ui.usmap_dialog import UsmapDumpDialog
+
+        UsmapDumpDialog(self).exec()
 
     # ---- recent files ----
 
