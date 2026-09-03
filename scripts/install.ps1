@@ -1,5 +1,5 @@
 param(
-    [string]$Source = ".\dist",
+    [string]$Source = ".\dist\DualForge",
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\DualForge",
     [switch]$DesktopShortcut
 )
@@ -27,6 +27,14 @@ if (-not (Test-Path $launcher)) {
 if (-not (Test-Path $internal)) {
     Write-Host "ERROR: $internal not found. DualForge.exe needs the _internal folder next to it." -ForegroundColor Red
     exit 1
+}
+
+# If the source was given as the old flattened .\dist root, point at the onedir
+# so the launcher and _internal stay together.
+if (-not (Test-Path $launcher) -and (Test-Path (Join-Path $Source "DualForge\DualForge.exe"))) {
+    $Source = Join-Path $Source "DualForge"
+    $launcher = Join-Path $Source "DualForge.exe"
+    $internal = Join-Path $Source "_internal"
 }
 
 Write-Host "Installing DualForge to $InstallDir ..."

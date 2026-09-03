@@ -368,6 +368,13 @@ class MainWindow(QMainWindow):
         )
         usmap_action.triggered.connect(self.open_usmap_dump)
         tools_menu.addAction(usmap_action)
+        tools_menu.addSeparator()
+        drivers_action = QAction("Game Drivers...", self)
+        drivers_action.setToolTip(
+            "View, import and export game driver configs (engine, scheme, formats)"
+        )
+        drivers_action.triggered.connect(self.open_drivers)
+        tools_menu.addAction(drivers_action)
 
         help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("About DualForge", self)
@@ -433,13 +440,25 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status)
         self.engine_badge = QLabel()
         self.engine_badge.setProperty("role", "badge")
+        self.driver_badge = QLabel()
+        self.driver_badge.setProperty("role", "badge")
         self.item_count = QLabel()
         self.item_count.setProperty("role", "badge")
         self.preview_note = QLabel("Ready")
         status.addWidget(self.engine_badge)
+        status.addWidget(self.driver_badge)
         status.addWidget(self.item_count)
         status.addPermanentWidget(self.preview_note)
         self._set_engine(None)
+        self._set_driver(None)
+
+    def _set_driver(self, driver) -> None:
+        if driver is None:
+            self.driver_badge.setText("")
+            self.driver_badge.setStyleSheet("")
+            return
+        self.driver_badge.setText(f"driver: {driver.name}")
+        self.driver_badge.setStyleSheet("color: #e0a53c;")
 
     def _set_engine(self, engine: Optional[str], detail: str = "") -> None:
         colors = {"unity": "#4fae6d", "unreal": "#4f8fd0", "container": "#e0a53c"}
@@ -503,6 +522,14 @@ class MainWindow(QMainWindow):
             return
         self.current_engine = detection.engine
         self._set_engine(detection.engine, detection.kind)
+        self._set_driver(None)
+        try:
+            from dualforge.drivers import registry as _driver_registry
+
+            driver = _driver_registry.match(path, engine=detection.engine)
+            self._set_driver(driver)
+        except Exception:
+            pass
         self.log.appendPlainText(detection.summary())
         try:
             if detection.engine == "unity":
@@ -655,7 +682,7 @@ class MainWindow(QMainWindow):
                     self.type_combo.addItem(type_name, type_name)
 
     def open_folder(self, folder: Optional[str] = None) -> None:
-        if folder is None:
+        if folder is None or not isinstance(folder, str):
             folder = QFileDialog.getExistingDirectory(
                 self, "Choose a game folder", self.settings.default_out_dir or ""
             )
@@ -1053,10 +1080,11 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "DualForge", f"Extraction failed:\n{message}")
 
     def _open_folder(self, path: str) -> None:
-        try:
-            os.startfile(path)
-        except OSError:
-            pass
+        if not path or not Path(path).is_dir():
+            QMessageBox.warning(self, "DualForge", f"Folder not found:\n{path}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            QMessageBox.warning(self, "DualForge", f"Could not open folder:\n{path}")
 
     def show_stats(self) -> None:
         if not self.current_path:
@@ -1190,6 +1218,11 @@ class MainWindow(QMainWindow):
         from dualforge.ui.usmap_dialog import UsmapDumpDialog
 
         UsmapDumpDialog(self).exec()
+
+    def open_drivers(self) -> None:
+        from dualforge.ui.drivers_dialog import DriversDialog
+
+        DriversDialog(self).exec()
 
     # ---- recent files ----
 

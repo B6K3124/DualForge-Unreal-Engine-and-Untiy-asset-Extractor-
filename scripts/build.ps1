@@ -1,5 +1,5 @@
 param(
-    [string]$OutDir = ".\dist"
+    [string]$OutDir = ".\dist\DualForge"
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,23 +60,42 @@ if ($bundled) {
     exit 1
 }
 
-$target = Join-Path $root $OutDir
-if ((Resolve-Path $target).Path -ne (Resolve-Path (Join-Path $root "dist\DualForge")).Path) {
-    New-Item -ItemType Directory -Path $target -Force | Out-Null
-    Copy-Item -Path "dist\DualForge\*" -Destination $target -Recurse -Force
+# The canonical PyInstaller onedir output lives at dist\DualForge\ and contains
+# DualForge.exe + the _internal runtime beside it. This is the runnable artifact.
+$built = Join-Path $root "dist\DualForge"
+if (-not (Test-Path (Join-Path $built "DualForge.exe")) -or -not (Test-Path (Join-Path $built "_internal"))) {
+    Write-Host "ERROR: build output is incomplete (expected DualForge.exe + _internal in dist\DualForge)." -ForegroundColor Red
+    exit 1
 }
 
-# Remove the non-runnable intermediate bootloader (bare exe with no python313.dll
-# or _internal folder beside it) so users cannot launch it by mistake.
-$intermediate = Join-Path $root "build\dualforge\DualForge.exe"
-if (Test-Path $intermediate) {
-    Remove-Item $intermediate -Force
+# Remove any leftover flattened copies at the dist root so there is exactly one
+# authoritative layout (the onedir). A bare DualForge.exe without _internal is
+# non-runnable and confuses users - drop it.
+$bare = Join-Path $root "dist\DualForge.exe"
+if (Test-Path $bare) { Remove-Item $bare -Force }
+$flatInternal = Join-Path $root "dist\_internal"
+if (Test-Path $flatInternal) { Remove-Item $flatInternal -Recurse -Force }
+
+# -OutDir lets you relocate the runnable app folder. It is the directory that
+# should contain DualForge.exe + _internal directly. By default it is the
+# canonical onedir (dist\DualForge), which is left in place.
+if (-not [System.IO.Path]::IsPathRooted($OutDir)) {
+    $OutDir = Join-Path $root $OutDir
+}
+$canonical = (Resolve-Path $built).Path
+$target = (Resolve-Path $OutDir -ErrorAction SilentlyContinue).Path
+if (-not $target -or $target -ne $canonical) {
+    if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
+    Copy-Item -Path "$built\*" -Destination $OutDir -Recurse -Force
+    $built = $OutDir
 }
 
-$runnable = Join-Path $root "dist\DualForge.exe"
 Write-Host ""
-Write-Host "Build complete. Run this file (the one in dist\, NOT build\):"
-Write-Host "  $runnable"
-Write-Host "Note: keep '_internal' in the same folder as DualForge.exe."
-Write-Host "Note: Oodle DLLs and CUE4Parse/vgmstream CLIs are never bundled -"
+Write-Host "Build complete. Run the onedir app:"
+Write-Host "  $built\DualForge.exe"
+Write-Host "Keep DualForge.exe and the '_internal' folder together - both live in $built."
+Write-Host "To install, run: .\scripts\install.ps1  (installs from $built)"
+Write-Host ""
+Write-Host "Oodle DLLs and CUE4Parse/vgmstream CLIs are never bundled -"
 Write-Host "place oo2core_*.dll next to the exe (or in ~/.dualforge) as needed."

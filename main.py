@@ -9,7 +9,7 @@ def main(argv=None) -> int:
     if "--gui" in argv or "-g" in argv:
         argv = [a for a in argv if a not in {"--gui", "-g"}]
         return _run_gui()
-    if argv and argv[0] in {"detect", "extract", "keys", "codecs"}:
+    if argv and argv[0] in {"detect", "extract", "keys", "codecs", "usmap", "drivers"}:
         from dualforge.cli import main as cli_main
 
         return cli_main(argv)

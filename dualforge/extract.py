@@ -38,12 +38,29 @@ class ExtractOptions:
     files: Optional[List[str]] = None
     formats: Optional[dict] = None
     usmap: Optional[str] = None
+    driver: Optional[object] = None
+    scheme: Optional[str] = None
+    scheme_params: Optional[dict] = None
     progress: Optional[Progress] = None
     is_cancelled: Optional[Cancel] = None
 
 
 def extract_file(path: str, options: ExtractOptions) -> ExtractResult:
     result = ExtractResult()
+    from dualforge.drivers.driver import GameDriver
+
+    driver = options.driver
+    if driver is None:
+        from dualforge.drivers import registry
+
+        driver = registry.match(path)
+    elif driver is not None and isinstance(driver, str):
+        from dualforge.drivers import registry
+
+        driver = registry.get(driver)
+    driver = driver if isinstance(driver, GameDriver) else None
+    if driver is not None:
+        _apply_driver(options, driver)
     detection = detect(path)
     result.detected = detection
     if detection is None:
@@ -63,10 +80,37 @@ def extract_file(path: str, options: ExtractOptions) -> ExtractResult:
     return result
 
 
+def _apply_driver(options: ExtractOptions, driver) -> None:
+    """Apply a game driver's config onto extract options.
+
+    Only fills in values the caller did not already provide, so explicit
+    CLI/GUI options always win over driver defaults.
+    """
+    # script/asset filters
+    if driver.asset_filter and not options.type_filter:
+        options.type_filter = tuple(driver.asset_filter)
+    # export format defaults
+    if driver.export_formats and not options.formats:
+        options.formats = dict(driver.export_formats)
+    # engine constraint
+    if driver.engine != "auto" and not options.engine:
+        options.engine = driver.engine
+    # encryption scheme + params
+    if not options.scheme and driver.encryption_scheme:
+        options.scheme = driver.encryption_scheme
+    if not options.scheme_params and driver.encryption_params:
+        options.scheme_params = dict(driver.encryption_params)
+    # usmap hint
+    if driver.usmap_required and not options.usmap:
+        from pathlib import Path
+
+        options.usmap = _find_usmap_hint(options.out_dir)
+
+
 def _extract_unity(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
     archive = UnityArchive(path)
     key = options.aes_key
-    scheme = "aes-256"
+    scheme = options.scheme or "aes-256"
     if not key:
         try:
             from dualforge.unreal import KeyStore
@@ -74,7 +118,7 @@ def _extract_unity(path: str, detection: Detection, options: ExtractOptions, res
             entry = KeyStore().find_for_archive(path)
             if entry is not None:
                 key = entry.aes_key
-                scheme = entry.scheme or "aes-256"
+                scheme = options.scheme or entry.scheme or "aes-256"
         except Exception:
             pass
     if key:
@@ -95,6 +139,17 @@ def _extract_unity(path: str, detection: Detection, options: ExtractOptions, res
             result.errors.append(f"{asset.path}: {exc}")
         except Exception as exc:
             result.errors.append(f"{asset.path}: {type(exc).__name__}: {exc}")
+
+
+def _find_usmap_hint(path: str) -> str:
+    """Best-effort locate a usmap file when a driver requires one."""
+    try:
+        from dualforge.unreal.uex_adapter import find_usmap
+
+        usmap = find_usmap(path)
+        return usmap or ""
+    except Exception:
+        return ""
 
 
 def _extract_unreal(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
@@ -154,6 +209,8 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
         usmap = find_usmap(str(Path(path).parent))
     dynamic_keys = None
     scheme = None
+    if options.scheme:
+        scheme = options.scheme if options.scheme not in ("", "aes-256") else None
     if not options.aes_key:
         try:
             from dualforge.unreal import KeyStore
@@ -161,7 +218,7 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
             entry = KeyStore().find_for_archive(path)
             if entry is not None and not options.aes_key:
                 dynamic_keys = entry.dynamic_keys or None
-                scheme = entry.scheme if entry.scheme not in ("", "aes-256") else None
+                scheme = options.scheme or (entry.scheme if entry.scheme not in ("", "aes-256") else None)
         except Exception:
             pass
     entries = bridge.list_files(

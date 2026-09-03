@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--format",
         help="export format applied to all types that support it, e.g. png, wav, obj, gltf",
     )
+    extract_parser.add_argument(
+        "--driver",
+        help="game driver name to apply (overrides aes/scheme/format defaults); "
+        "'auto' matches the archive path automatically",
+    )
     extract_parser.set_defaults(handler=_cmd_extract)
 
     keys_parser = sub.add_parser("keys", help="manage the decryption key database")
@@ -124,6 +129,60 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-processes", action="store_true", help="list running processes and exit",
     )
     usmap_dump.set_defaults(usmap_handler=_cmd_usmap_dump)
+
+    driver_parser = sub.add_parser(
+        "drivers", help="manage game drivers (import/export/match)"
+    )
+    driver_sub = driver_parser.add_subparsers(dest="driver_command", required=True)
+    driver_list = driver_sub.add_parser("list", help="list all registered game drivers")
+    driver_list.set_defaults(driver_handler=_cmd_drivers_list)
+    driver_show = driver_sub.add_parser("show", help="show a driver's details as JSON")
+    driver_show.add_argument("name", help="driver name")
+    driver_show.set_defaults(driver_handler=_cmd_drivers_show)
+    driver_export = driver_sub.add_parser(
+        "export", help="export a driver to a JSON file"
+    )
+    driver_export.add_argument("name", help="driver name")
+    driver_export.add_argument("-o", "--out", help="output file (default: <name>.<name>.dualforge-driver.json)")
+    driver_export.add_argument(
+        "--dir",
+        help="export a directory of driver files",
+    )
+    driver_export.add_argument(
+        "--all", action="store_true", help="export all registered drivers",
+    )
+    driver_export.add_argument(
+        "--builtin", action="store_true", help="export only built-in drivers",
+    )
+    driver_export.set_defaults(driver_handler=_cmd_drivers_export)
+    driver_import = driver_sub.add_parser(
+        "import", help="import a driver from a JSON file"
+    )
+    driver_import.add_argument("path", help="path to a .dualforge-driver.json file")
+    driver_import.add_argument(
+        "--dir", help="import all driver files from a directory",
+    )
+    driver_import.set_defaults(driver_handler=_cmd_drivers_import)
+    driver_match = driver_sub.add_parser(
+        "match", help="find the best driver for an archive"
+    )
+    driver_match.add_argument("archive", help="path to an archive file")
+    driver_match.add_argument("--mount", default="", help="pak mount point hint")
+    driver_match.add_argument(
+        "--engine", choices=["unity", "unreal"], help="filter by engine",
+    )
+    driver_match.set_defaults(driver_handler=_cmd_drivers_match)
+    driver_create = driver_sub.add_parser(
+        "create",
+        help="auto-build a game driver from an archive, from scratch",
+    )
+    driver_create.add_argument("archive", help="path to an archive file")
+    driver_create.add_argument("--name", help="driver name (default: derived from folder)")
+    driver_create.add_argument("--label", help="human-friendly label")
+    driver_create.add_argument(
+        "-o", "--out", help="output file; if set, saves the driver and registers it",
+    )
+    driver_create.set_defaults(driver_handler=_cmd_drivers_create)
     return parser
 
 
@@ -145,6 +204,20 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         for type_name in DEFAULT_FORMATS:
             if args.format in format_choices(type_name):
                 formats[type_name] = args.format
+    driver = None
+    if args.driver:
+        from dualforge.drivers import registry
+
+        if args.driver == "auto":
+            driver = registry.match(args.path)
+        else:
+            driver = registry.get(args.driver)
+        if driver is None:
+            print(
+                f"no driver matching '{args.driver}' for {args.path}",
+                file=sys.stderr,
+            )
+            return 1
     options = ExtractOptions(
         out_dir=args.out,
         aes_key=args.aes,
@@ -153,6 +226,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         files=args.files,
         formats=formats,
         usmap=args.usmap,
+        driver=driver,
         progress=lambda i, t, m: print(f"[{i + 1}/{t}] {m}", file=sys.stderr),
     )
     try:
@@ -161,6 +235,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"detected: {result.detected.engine}/{result.detected.kind}")
+    if driver is not None:
+        print(f"driver:  {driver.name} ({driver.label})")
     print(f"extracted {result.ok} assets to {args.out}")
     for error in result.errors:
         print(f"warning: {error}", file=sys.stderr)
@@ -390,6 +466,142 @@ def _cmd_usmap_dump(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_drivers_list(args: argparse.Namespace) -> int:
+    from dualforge.encryption.presets import PRESETS
+
+    from dualforge.drivers import registry
+
+    drivers = registry.list()
+    if not drivers:
+        print("no game drivers registered")
+        return 0
+    print(f"{len(drivers)} driver(s):")
+    for driver in sorted(drivers, key=lambda d: d.name):
+        scheme = driver.encryption_scheme
+        egame = f" [{driver.egame}]" if driver.egame else ""
+        print(
+            f"  {driver.name:<22} {driver.label:<30} "
+            f"({driver.engine}/{scheme}){egame}"
+        )
+    return 0
+
+
+def _cmd_drivers_show(args: argparse.Namespace) -> int:
+    from dualforge.drivers import registry
+
+    driver = registry.get(args.name)
+    if driver is None:
+        print(f"no driver named '{args.name}'", file=sys.stderr)
+        return 1
+    print(driver.to_json())
+    return 0
+
+
+def _cmd_drivers_export(args: argparse.Namespace) -> int:
+    from dualforge.drivers import registry
+
+    if args.dir:
+        from pathlib import Path
+
+        target = Path(args.dir)
+        target.mkdir(parents=True, exist_ok=True)
+        count = registry.export_all(str(target))
+        print(f"exported {count} driver(s) to {target}")
+        return 0
+    if args.all:
+        target = args.out or "drivers"
+        from pathlib import Path
+
+        Path(target).mkdir(parents=True, exist_ok=True)
+        count = registry.export_all(target)
+        print(f"exported {count} driver(s) to {target}")
+        return 0
+    if args.builtin:
+        target = args.out or "drivers"
+        from pathlib import Path
+
+        Path(target).mkdir(parents=True, exist_ok=True)
+        count = registry.export_builtin(target)
+        print(f"exported {count} built-in driver(s) to {target}")
+        return 0
+    driver = registry.get(args.name)
+    if driver is None:
+        print(f"no driver named '{args.name}'", file=sys.stderr)
+        return 1
+    out = args.out or f"{driver.name}.{driver.name}.dualforge-driver.json"
+    written = registry.save(driver, out)
+    print(f"exported driver to {written}")
+    return 0
+
+
+def _cmd_drivers_import(args: argparse.Namespace) -> int:
+    from dualforge.drivers import registry
+
+    if args.dir:
+        count = registry.load_dir(args.dir)
+        print(f"imported {count} driver(s) from {args.dir}")
+        return 0
+    try:
+        driver = registry.load_file(args.path)
+    except Exception as exc:
+        print(f"import failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"imported driver '{driver.name}' ({driver.label})")
+    return 0
+
+
+def _cmd_drivers_match(args: argparse.Namespace) -> int:
+    from dualforge.drivers import registry
+
+    driver = registry.match(args.archive, args.mount, engine=args.engine)
+    if driver is None:
+        print(f"no driver matches {args.archive}", file=sys.stderr)
+        return 1
+    print(f"matched: {driver.name} ({driver.label})")
+    print(f"  engine             : {driver.engine}")
+    print(f"  encryption scheme  : {driver.encryption_scheme}")
+    if driver.encryption_params:
+        print(f"  scheme params      : {driver.encryption_params}")
+    if driver.egame:
+        print(f"  CUE4Parse EGame    : {driver.egame}")
+    if driver.usmap_required:
+        print("  usmap required     : yes")
+    if driver.export_formats:
+        print(f"  export formats     : {driver.export_formats}")
+    if driver.asset_filter:
+        print(f"  asset filter       : {driver.asset_filter}")
+    return 0
+
+
+def _cmd_drivers_create(args: argparse.Namespace) -> int:
+    from dualforge.drivers import build_driver_from_archive, registry
+
+    # Double-check the archive is real/readable for a clearer error.
+    from pathlib import Path
+
+    if not Path(args.archive).is_file():
+        print(f"archive not found: {args.archive}", file=sys.stderr)
+        return 1
+    from dualforge.drivers.driver import GameDriver
+
+    if args.name and registry.get(args.name) is not None:
+        print(
+            f"a driver named '{args.name}' already exists; pick a different --name",
+            file=sys.stderr,
+        )
+        return 1
+    driver = build_driver_from_archive(args.archive, name=args.name, label=args.label)
+    if args.out:
+        written = registry.save(driver, args.out)
+        print(
+            f"created and saved driver '{driver.name}' ({driver.label}) -> {written}"
+        )
+    else:
+        print(f"created driver '{driver.name}' ({driver.label})")
+    print(driver.to_json())
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -402,6 +614,9 @@ def main(argv=None) -> int:
     usmap_handler = getattr(args, "usmap_handler", None)
     if usmap_handler:
         return usmap_handler(args)
+    driver_handler = getattr(args, "driver_handler", None)
+    if driver_handler:
+        return driver_handler(args)
     parser.print_help()
     return 0
 

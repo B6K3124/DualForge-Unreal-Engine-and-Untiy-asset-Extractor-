@@ -87,8 +87,8 @@ class GhidraSignals(QObject):
 
 
 class GhidraWorker(QThread):
-    def __init__(self, argv: List[str], parent=None):
-        super().__init__(parent)
+    def __init__(self, argv: List[str]):
+        super().__init__()
         self.argv = argv
         self._signals = GhidraSignals()
         self.log = self._signals.log
@@ -117,6 +117,7 @@ class GhidraDialog(QDialog):
         self.resize(760, 560)
         self._worker: Optional[GhidraWorker] = None
         self._result_json: Optional[str] = None
+        self._result_owned = False
         self._close_when_done = False
 
         layout = QVBoxLayout(self)
@@ -223,6 +224,8 @@ class GhidraDialog(QDialog):
 
     def _finish(self) -> None:
         self._set_running(False)
+        if self._worker is not None:
+            self._worker = None
         if self._close_when_done:
             self.accept()
 
@@ -257,6 +260,7 @@ class GhidraDialog(QDialog):
 
         os.close(fd)
         self._result_json = json_path
+        self._result_owned = True
         argv += ["--json", json_path]
         self._run_worker(argv)
 
@@ -268,7 +272,7 @@ class GhidraDialog(QDialog):
         self.log_view.clear()
         self._set_running(True)
         self.status_label.setText("Working...")
-        worker = GhidraWorker(argv, self)
+        worker = GhidraWorker(argv)
         worker.log.connect(self._log)
         worker.done.connect(self._on_done)
         worker.failed.connect(self._on_failed)
@@ -326,11 +330,23 @@ class GhidraDialog(QDialog):
         self.results_label.setVisible(True)
         self.results_table.setVisible(True)
 
+    def _cleanup_result(self) -> None:
+        if self._result_owned and self._result_json:
+            import os
+
+            try:
+                os.unlink(self._result_json)
+            except OSError:
+                pass
+            self._result_json = None
+            self._result_owned = False
+
     def _close(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._close_when_done = True
             self.setVisible(False)
             return
+        self._cleanup_result()
         self.accept()
 
     def closeEvent(self, event) -> None:
@@ -339,4 +355,5 @@ class GhidraDialog(QDialog):
             self.setVisible(False)
             event.ignore()
             return
+        self._cleanup_result()
         super().closeEvent(event)

@@ -170,7 +170,7 @@ def collect_candidates(
     Windows are sized as ``2 * key_length`` hex characters.
     """
     found: Dict[Tuple[int, int], Candidate] = {}
-    for key_length in sorted({min_length, max_length}):
+    for key_length in range(min_length, max_length + 1):
         window_size = key_length * 2
         for i in range(0, len(context) - window_size + 1):
             window = context[i : i + window_size]
@@ -337,16 +337,23 @@ def find_analyze_headless() -> Optional[Path]:
     if home:
         root = Path(home)
         candidates.append(root / "support" / ("analyzeHeadless.bat" if _is_windows() else "analyzeHeadless"))
-    for base in (
+    search_roots = [
         Path.cwd(),
         Path.home(),
         Path.home() / "tools",
         Path.home() / "Desktop",
         Path("C:\\") if _is_windows() else Path("/opt"),
         Path("D:\\") if _is_windows() else Path("/usr/local"),
-    ):
-        if base.exists():
-            for match in base.glob("ghidra_*/support/analyzeHeadless*"):
+    ]
+    for base in search_roots:
+        if not base.exists():
+            continue
+        base_candidates = [base]
+        ghidra_sub = base / "ghidra"
+        if ghidra_sub.is_dir():
+            base_candidates.append(ghidra_sub)
+        for root in base_candidates:
+            for match in root.glob("ghidra_*/support/analyzeHeadless*"):
                 if match.is_file():
                     candidates.append(match)
     for name in ("analyzeHeadless", "analyzeHeadless.bat"):
