@@ -319,7 +319,7 @@ class MainWindow(QMainWindow):
         extract_action.triggered.connect(self.extract_all)
         file_menu.addAction(extract_action)
         file_menu.addSeparator()
-        keys_action = QAction("Manage AES Keys...", self)
+        keys_action = QAction("Manage Keys...", self)
         keys_action.triggered.connect(self.manage_keys)
         file_menu.addAction(keys_action)
         profiles_action = QAction("Game Profiles...", self)
@@ -1069,7 +1069,7 @@ class MainWindow(QMainWindow):
     def manage_keys(self) -> None:
         store = KeyStore()
         dialog = QDialog(self)
-        dialog.setWindowTitle("Manage AES Keys")
+        dialog.setWindowTitle("Manage Keys")
         dialog.resize(420, 340)
         layout = QVBoxLayout(dialog)
         self._key_list = QListWidget()

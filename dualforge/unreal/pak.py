@@ -264,8 +264,8 @@ class PakArchive:
             )
         raise PakError(
             f"failed to read the pak index with {len(probes) - 1} key(s) tried "
-            f"({tried}). The archive may be encrypted - add its AES key via "
-            f"File > Manage AES Keys or paste it into Settings.{chunk_hint}"
+            f"({tried}). The archive may be encrypted - add its key via "
+            f"File > Manage Keys or paste it into Settings.{chunk_hint}"
         )
 
     def _read_sizes(self) -> Dict[str, int]:

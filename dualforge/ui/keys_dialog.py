@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 class KeyDialog(QDialog):
     def __init__(self, parent=None, scheme: str = "aes-256"):
         super().__init__(parent)
-        self.setWindowTitle("Add AES Key")
+        self.setWindowTitle("Add Key")
         self.setMinimumWidth(420)
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("e.g. Delta Force")

@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     extract_parser.set_defaults(handler=_cmd_extract)
 
-    keys_parser = sub.add_parser("keys", help="manage the AES key database")
+    keys_parser = sub.add_parser("keys", help="manage the decryption key database")
     keys_sub = keys_parser.add_subparsers(dest="key_command", required=True)
     keys_list = keys_sub.add_parser("list")
     keys_list.set_defaults(key_handler=_cmd_keys_list)
