@@ -95,7 +95,7 @@ right-click → **Create shortcut** and put the shortcut anywhere.
 | File | Open Folder... (`Ctrl+Shift+O`) | Scan a whole game folder (multi-archive mode) |
 | File | Open Recent | Re-open previously opened archives |
 | File | Export Selected / Extract All | Extract checked assets / everything |
-| File | Manage AES Keys... | Add, remove, or sync decryption keys |
+| File | Manage Keys... | Add, remove, or sync decryption keys (choose a scheme for non-standard protection) |
 | File | Game Profiles... | Save a game (folder + key + output) and reopen it in one click |
 | File | Settings... | Theme, paths, export formats, default key (see §7) |
 | View | Asset Statistics... | Per-type file counts and sizes |
@@ -138,16 +138,28 @@ Audio previews that fail to decode fall back gracefully with an error page.
 
 ---
 
-## 5. Unlocking encrypted archives (AES keys)
+## 5. Unlocking encrypted archives (decryption keys)
 
 DualForge **never ships keys**. It decrypts with keys you provide — manually, from an
 FModel file, from community endpoints (opt-in), or by finding them yourself with
 Ghidra. Keys are stored locally in plain text at `~/.dualforge/keys.json`.
 
+**Schemes.** Beyond plain AES-256, keys can carry a *scheme* (e.g. `delta-force`
+AES+XOR, `snowbreak` derived AES, `unity-cn` XOR, custom round-key AES, partial
+encryption) plus an optional GUID and scheme parameters, so games with non-standard
+protection work too. Run `python main.py keys schemes` (or *File ▸ Manage Keys ▸ Add...*
+Scheme dropdown) to see what's supported.
+
 ### 5.1 Add a key manually
 
-**File ▸ Manage AES Keys → Add...** — enter a title and a 64-hex-char AES-256 key.
-Or paste your default key under **File ▸ Settings ▸ Default AES key**.
+**File ▸ Manage Keys → Add...** — enter a title and a key, pick a **Scheme** (default
+AES-256), and optionally a GUID and comma-separated parameters (e.g.
+`xor_key=1122334455667788`). Or paste your default key under
+**File ▸ Settings ▸ Default AES key**.
+
+Prefer to verify a key before committing? Use the CLI:
+`python main.py keys test "game.pak" --title "<name>"` (or `--aes <key> --scheme <s>`)
+confirms the scheme+key against the pak's encrypted index before you save it.
 
 ### 5.2 Import from FModel (`Global.AESKeys.json`)
 
@@ -156,7 +168,7 @@ dynamic keys (important for modern games).
 
 ### 5.3 Sync from community endpoints (opt-in, network)
 
-**File ▸ Manage AES Keys → Sync from endpoints** pulls the latest keys from community
+**File ▸ Manage Keys → Sync from endpoints** pulls the latest keys from community
 repositories (defaults: FortniteCentral, aes.ue4server.com — editable in Settings).
 
 ### 5.4 Automated Ghidra key hunt (find keys yourself)
@@ -305,7 +317,7 @@ taken from — re-dump after a game update.
 | App closes instantly, nothing happens | Same as above, or a missing `_internal` folder |
 | "CUE4Parse CLI not found" | IoStore/fallback needs **uex** — set its path in Settings |
 | "Oodle DLL not found" | Oodle-compressed pak. Copy `oo2core_*.dll` from the game's `Binaries\Win64\` into the pak's folder, the working directory, or `~/.dualforge` |
-| Archive won't open / encrypted | Add the AES key (File ▸ Manage AES Keys), import an FModel JSON, or run the Ghidra key hunt (Tools ▸ Ghidra Key Hunt) |
+| Archive won't open / encrypted | Add the decryption key (File ▸ Manage Keys, pick the right scheme), import an FModel JSON, verify it with `keys test`, or run the Ghidra key hunt (Tools ▸ Ghidra Key Hunt) |
 | Exotic audio has no sound | Install **vgmstream** and set it in Settings; without it only WAV/OGG/FLAC preview |
 | 3D mesh viewer empty | OpenGL unavailable — the mesh page shows a message; mesh **export** still works |
 | Ghidra hunt fails | Run **Check Setup** in the dialog; install Ghidra 11.x + Java 21 and set `GHIDRA_HOME` |
@@ -361,7 +373,11 @@ python main.py extract "game_Data\sharedassets0.assets" -o out     # extract eve
 python main.py extract "game_Data\sharedassets0.assets" -o out --format jpg
 python main.py extract "game\Content\Paks\pakchunk0-Windows.utoc" -o out --usmap "C:\mappings\game.usmap"
 python main.py keys add "My Game" 0123...64hex...abc
+python main.py keys add "My Game" 0x... --scheme delta-force --guid abc --param xor_key=1122334455667788
 python main.py keys list
+python main.py keys schemes                    # list supported schemes / game presets
+python main.py keys test "game.pak" --title "My Game"        # verify a stored key+scheme
+python main.py keys test "game.pak" --aes 0x... --scheme aes-256
 python main.py keys import "C:\FModel\Output\Global.AESKeys.json"
 python main.py keys sync
 python main.py codecs

@@ -17,7 +17,7 @@
 - **Native Unreal `.pak` support** — reads pak indices directly with `pyuepak` (zero external tools). Oodle-compressed archives use the game-shipped `oo2core_*.dll`, discovered automatically in the pak's own folder chain (`Binaries/Win64`, `Engine/Binaries`, ...), then `~/.dualforge`/PATH; the DLL is never bundled or downloaded. IoStore (`.utoc`/`.ucas`) and parser edge cases fall back to the CUE4Parse CLI.
 - **Universal decompression core** — one unified `decompress()` API over zlib, gzip, bz2, lzma, LZ4/LZ4HC, Zstandard, Brotli, snappy, zip and 7z, with automatic magic sniffing and nested-container recursion.
 - **Oodle support** — loads the game-shipped `oo2core_*.dll` via ctypes (`OodleLZ_Decompress`). The DLL is never bundled with DualForge.
-- **AES decryption & unlocking** — every encrypted archive is opened by **auto-probing all stored keys** (no-key first, then every entry in the key store, then the default key), with the winning key reported in the log. Keys come from manual entry, FModel `Global.AESKeys.json` import, or opt-in community endpoint sync (FortniteCentral + multi-game `aes.ue4server.com`, configurable). UE 5.4+ paks that use per-chunk dynamic keys are detected and routed to the CLI with a clear hint.
+- **Multi-key-type decryption (beyond plain AES)** — every encrypted archive is opened by **auto-probing all stored keys** (no-key first, then every entry in the key store, then the default key), with the winning key reported in the log. Keys come from manual entry, FModel `Global.AESKeys.json` import, or opt-in community endpoint sync (FortniteCentral + multi-game `aes.ue4server.com`, configurable). Each stored key is tagged with a **scheme** (AES-256, AES+XOR, derived/hash-keyed, partial encryption, custom round-key AES, Unity-CN XOR, ...) plus optional GUID and scheme parameters, so games with non-standard protection are first-class citizens. `keys test` verifies a scheme+key offline and `keys schemes` lists what's supported. UE 5.4+ paks that use per-chunk dynamic keys are detected and routed to the CUE4Parse bridge with the right `game` profile and dynamic keys.
 - **Unity streamed data (.resS)** — sibling `.resS`/`.resource`/`.split*` stream files next to a bundle are loaded automatically, so streamed textures, audio and mesh data decode without manual file juggling.
 - **Hierarchical asset browser** — folder tree with per-asset checkboxes, regex + type filters, "Check All / None", and multi-archive **Open Folder** mode (scan a whole game directory).
 - **Asset previews** — texture/sprite image viewer (zoom/pan), audio clip waveform with inline playback (QtMultimedia), 3D mesh viewer (OpenGL wireframe + solid), text/JSON/XML viewer, and a full hex inspector. Unreal files preview natively from the pak (images, WAV/OGG/FLAC, `.wem`-style audio via vgmstream, text, hex).
@@ -102,17 +102,17 @@ python main.py          # from source
 dist\DualForge.exe      # from the current build
 ```
 
-Open an archive (or drag-and-drop it), click an asset to preview it, then **Extract All** to a folder or **Export Selected** for just the checked assets. Use **File ▸ Open Folder** to scan a whole game directory, **File ▸ Game Profiles** to reopen games in one click, **View ▸ Asset Statistics** for per-type summaries, **File ▸ Manage AES Keys** to add decryption keys, **Tools ▸ Ghidra Key Hunt** to find keys in a game binary with headless Ghidra, and **View ▸ Theme** to switch dark/light. Export formats are configured under **File ▸ Settings**.
+Open an archive (or drag-and-drop it), click an asset to preview it, then **Extract All** to a folder or **Export Selected** for just the checked assets. Use **File ▸ Open Folder** to scan a whole game directory, **File ▸ Game Profiles** to reopen games in one click, **View ▸ Asset Statistics** for per-type summaries, **File ▸ Manage Keys** to add decryption keys, **Tools ▸ Ghidra Key Hunt** to find keys in a game binary with headless Ghidra, and **View ▸ Theme** to switch dark/light. Export formats are configured under **File ▸ Settings**.
 
 ### Unlocking encrypted archives
 
 DualForge never ships or downloads keys or Oodle DLLs — it uses what you (or the game) provide:
 
-1. **Add keys** — *File ▸ Manage AES Keys* (manual entry), *File ▸ Settings ▸ "Import AES Keys JSON..."* (FModel `Global.AESKeys.json`, incl. per-chunk dynamic keys), or CLI (`keys add` / `keys import`). Keys are stored locally in `~/.dualforge/keys.json`.
-2. **Sync keys** (optional) — *File ▸ Manage AES Keys ▸ Sync from endpoints* pulls keys from community repositories (defaults: FortniteCentral and the multi-game `aes.ue4server.com`; editable in Settings). This is opt-in network access.
+1. **Add keys** — *File ▸ Manage Keys* (manual entry, with a **Scheme** dropdown plus GUID and parameters for non-standard protection), *File ▸ Settings ▸ "Import AES Keys JSON..."* (FModel `Global.AESKeys.json`, incl. per-chunk dynamic keys), or CLI (`keys add` / `keys import`). Keys are stored locally in `~/.dualforge/keys.json`.
+2. **Sync keys** (optional) — *File ▸ Manage Keys ▸ Sync from endpoints* pulls keys from community repositories (defaults: FortniteCentral and the multi-game `aes.ue4server.com`; editable in Settings). This is opt-in network access.
 3. **Open the pak** — encrypted archives are opened by auto-probing every stored key (no-key → key store → default key). The log reports which key unlocked the archive. Toggle probing off via *Settings ▸ "Try every key from the key store before failing"* if you prefer only the default key.
 4. **Oodle paks** — the game-shipped `oo2core_*.dll` is found automatically next to the pak (its folder chain and `Binaries/`/`Engine/` subpaths), so no manual copying is normally needed. The error message lists every location searched if it is missing.
-5. **UE 5.4+ per-chunk encryption** — paks encrypted with per-chunk dynamic keys cannot be read natively (single-key only). DualForge detects these, tries the CLI fallback, and points you to FModel if the dynamic keys are needed.
+5. **UE 5.4+ per-chunk / dynamic-key / non-AES encryption** — paks using per-chunk dynamic keys or a non-standard scheme cannot be read natively (single AES key only). DualForge detects these, routes them to the CUE4Parse bridge with the correct `game` profile and dynamic keys (GUID-keyed entries), and reports the best-known fallback. Use `dualforge keys test <pak>` to confirm a scheme+key offline before committing to it.
 6. **Automated key hunting (Ghidra)** — if a game's key is not in any community list and you have the game binary, DualForge can find it for you: it launches headless Ghidra, scans the binary's memory for crypto constants (AES S-box) and high-entropy hex keys, and adds the best 32-byte candidates straight into the key store. From the GUI use **Tools ▸ Ghidra Key Hunt...** (check the setup first, then start the hunt — live log + results table), or from a terminal:
 
    ```powershell
@@ -136,9 +136,15 @@ python main.py extract "game_Data\sharedassets0.assets" -o out
 # Extract with a per-type format (textures as JPG, meshes as glTF, ...)
 python main.py extract "game_Data\sharedassets0.assets" -o out --format jpg
 
-# Store / list AES keys
+# Store / list decryption keys (with scheme + parameters for non-standard games)
 python main.py keys add "Fortnite" 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+python main.py keys add "Delta Force" 0x... --scheme delta-force --guid abc --param xor_key=1122334455667788
 python main.py keys list
+python main.py keys schemes                     # list supported schemes / game presets
+
+# Test a scheme+key against an encrypted pak (verifies before committing)
+python main.py keys test "game\Content\Paks\pakchunk0-Windows.pak" --aes 0x...            # plain AES
+python main.py keys test "game\Content\Paks\pakchunk0-Windows.pak" --title "Delta Force"  # stored entry
 
 # Import an FModel Global.AESKeys.json key file
 python main.py keys import "C:\FModel\Output\Global.AESKeys.json"
@@ -221,6 +227,7 @@ dualforge/
   compression/             Universal decompression core + Oodle ctypes loader
   unity/                   UnityPy wrapper (list / extract / preview)
   unreal/                  Native pak reader (pyuepak) + CUE4ParseCLI bridge + AES key store
+  encryption/              Decryption-scheme registry, pipeline, brute-force, presets + schemes
   audio/                   vgmstream bridge
   export/                  Sanitized output writer + format conversion (glTF, textures)
   ui/                      PySide6 GUI: themes, widgets, previews, dialogs, tree, profiles, stats
