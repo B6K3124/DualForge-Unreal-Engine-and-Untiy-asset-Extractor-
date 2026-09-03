@@ -6,11 +6,18 @@ Build with:
 or via scripts/build.ps1
 """
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
+
+# cryptography is imported lazily (inside the encryption scheme functions) so it
+# is invisible to PyInstaller's static import graph. collect_all bundles its
+# Python modules plus the platform C/DLL backends it needs at runtime.
+_crypt_datas, _crypt_binaries, _crypt_hidden = collect_all("cryptography")
 
 hiddenimports = [
     "PIL._tkinter_finder",
 ]
+hiddenimports += ["cryptography"]
+hiddenimports += _crypt_hidden
 hiddenimports += collect_submodules("dualforge")
 hiddenimports += collect_submodules("UnityPy")
 hiddenimports += collect_submodules("pyuepak")
@@ -20,6 +27,7 @@ hiddenimports += ["requests"]
 # The Ghidra key-hunt scripts are loaded by path (never imported), so bundle
 # them as data so the Tools > Ghidra Key Hunt UI works in frozen builds.
 datas = collect_data_files("dualforge")
+datas += _crypt_datas
 datas += [
     ("scripts/ghidra/ghidra_key_finder.py", "dualforge/ghidra"),
     ("scripts/ghidra/ghidra_key_finder_server.py", "dualforge/ghidra"),
@@ -28,7 +36,7 @@ datas += [
 a = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=[],
+    binaries=_crypt_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
