@@ -101,10 +101,28 @@ class UnityArchive:
                     return value
         return -1
 
-    def set_decrypt_key(self, key: str) -> None:
+    def set_decrypt_key(self, key: str, scheme: str = "aes-256") -> None:
+        """Set the Unity bundle decryption key via UnityPy.
+
+        Standard Unity bundles take a 16-char ASCII key (or a 32-byte AES hex
+        key as bytes). ``scheme`` selects the interpretation:
+
+        - ``aes-256`` (default): pass the key straight through (UnityPy handles
+          the AES/XOR bundle decryption with hex keys of any Unreal-style
+          length, and 16-char keys verbatim).
+        - ``unity-cn``: expect a 16-char key; if a ``0x``-hex AES key is given,
+          UnityPy still accepts it (CN games commonly expose the raw AES key).
+        """
+        normalized = key
+        if normalized.lower().startswith("0x"):
+            hex_body = normalized[2:].strip()
+            if len(hex_body) in (32, 64) and all(c in "0123456789abcdefABCDEF" for c in hex_body):
+                normalized = bytes.fromhex(hex_body)
+            else:
+                normalized = normalized[2:].strip()
         try:
-            self._types.set_assetbundle_decrypt_key(key)
-        except (AttributeError, TypeError) as exc:
+            self._types.set_assetbundle_decrypt_key(normalized)
+        except (AttributeError, TypeError, ValueError) as exc:
             raise UnityError(f"could not set decrypt key: {exc}") from exc
 
     def assets(self) -> Iterator[UnityAsset]:

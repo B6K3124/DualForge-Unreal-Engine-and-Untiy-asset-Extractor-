@@ -28,8 +28,8 @@ class FakeStore:
         return self._entries
 
 
-def _fake_entry(title: str, key: str):
-    return SimpleNamespace(title=title, aes_key=key)
+def _fake_entry(title: str, key: str, scheme: str = "aes-256"):
+    return SimpleNamespace(title=title, aes_key=key, scheme=scheme)
 
 
 @pytest.fixture()
@@ -43,7 +43,7 @@ def store_path(tmp_path: Path) -> str:
 def test_probe_key_list_no_key_first(store_path: str, monkeypatch):
     monkeypatch.setattr("dualforge.unreal.KeyStore", lambda: FakeStore([]))
     probes = _probe_key_list(None, try_all_keys=True)
-    assert probes[0] == (None, None)
+    assert probes[0] == (None, None, True)
     assert len(probes) == 1
 
 
@@ -59,10 +59,11 @@ def test_probe_key_list_store_then_default(store_path: str, monkeypatch):
         ),
     )
     probes = _probe_key_list("C" * 64, try_all_keys=True)
-    titles = [title for title, _ in probes]
+    titles = [title for title, _, _ in probes]
     assert titles == [None, "Fortnite", "Other", "default"]
-    keys = [key for _, key in probes if key]
+    keys = [key for _, key, _ in probes if key]
     assert keys == ["A" * 64, "B" * 64, "C" * 64]
+    assert all(can for _, _, can in probes)
 
 
 def test_probe_key_list_skips_when_disabled(store_path: str, monkeypatch):
@@ -71,7 +72,7 @@ def test_probe_key_list_skips_when_disabled(store_path: str, monkeypatch):
         lambda: FakeStore([_fake_entry("Fortnite", "A" * 64)]),
     )
     probes = _probe_key_list(None, try_all_keys=False)
-    assert probes == [(None, None)]
+    assert probes == [(None, None, True)]
 
 
 def test_probe_key_list_ignores_store_errors(store_path: str, monkeypatch):
@@ -79,7 +80,22 @@ def test_probe_key_list_ignores_store_errors(store_path: str, monkeypatch):
         "dualforge.unreal.KeyStore", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
     )
     probes = _probe_key_list("D" * 64, try_all_keys=True)
-    assert probes == [(None, None), ("default", "D" * 64)]
+    assert probes == [(None, None, True), ("default", "D" * 64, True)]
+
+
+def test_probe_key_list_skips_non_aes_schemes(store_path: str, monkeypatch):
+    """Non-AES scheme keys and non-hex keys are not handed to pyuepak."""
+    monkeypatch.setattr(
+        "dualforge.unreal.KeyStore",
+        lambda: FakeStore(
+            [
+                _fake_entry("Delta Force", "E" * 64, scheme="delta-force"),
+                _fake_entry("Unity CN", "XxecodrPeGaka2e6", scheme="unity-cn"),
+            ]
+        ),
+    )
+    probes = _probe_key_list(None, try_all_keys=True)
+    assert probes == [(None, None, True)]
 
 
 class FakePakFile:
@@ -359,3 +375,59 @@ def test_settings_defaults():
 
     assert Settings().try_all_keys is True
     assert Settings().sync_endpoints == []
+
+
+# ---------------------------------------------------------------- key schemes
+
+
+def test_keyentry_scheme_roundtrip(store_path: str):
+    from dualforge.unreal.keys import KeyEntry
+
+    entry = KeyEntry(
+        title="Delta Force",
+        aes_key="0x" + "A" * 64,
+        scheme="delta-force",
+        guid="abc",
+        parameters={"xor_key": "1122334455667788"},
+        dynamic_keys={"g1": "0x" + "B" * 64},
+    )
+    restored = KeyEntry.from_dict(entry.as_dict())
+    assert restored.scheme == "delta-force"
+    assert restored.guid == "abc"
+    assert restored.parameters == {"xor_key": "1122334455667788"}
+    assert restored.dynamic_keys == {"g1": "0x" + "B" * 64}
+
+
+def test_keyentry_to_material(store_path: str):
+    from dualforge.unreal.keys import KeyEntry
+
+    entry = KeyEntry(title="G", aes_key="AB" * 32, scheme="xor8", parameters={"start": "0"})
+    material = entry.to_material()
+    assert material.scheme == "xor8"
+    assert material.parameters == {"start": "0"}
+
+
+def test_keystore_persists_scheme_fields(store_path: str):
+    store = KeyStore(store_path)
+    store.add(
+        "Snowbreak",
+        "CD" * 32,
+        scheme="derived-aes-md5",
+        guid="g9",
+        parameters={"derived_name": "pakchunk0-Windows"},
+    )
+    reloaded = KeyStore(store_path)
+    entry = reloaded.get_entry("Snowbreak")
+    assert entry.scheme == "derived-aes-md5"
+    assert entry.guid == "g9"
+    assert entry.parameters == {"derived_name": "pakchunk0-Windows"}
+
+
+def test_find_for_archive_matches_game_folder(store_path: str):
+    store = KeyStore(store_path)
+    store.add("Delta Force", "AB" * 32)
+    store.add("Other", "CD" * 32)
+    hit = store.find_for_archive(r"C:\Games\DeltaForce\Content\Paks\pak.pak")
+    assert hit is not None and hit.title == "Delta Force"
+    miss = store.find_for_archive(r"C:\Games\Unrelated\Content\Paks\pak.pak")
+    assert miss is None

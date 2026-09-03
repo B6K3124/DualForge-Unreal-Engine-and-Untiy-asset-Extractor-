@@ -130,8 +130,14 @@ _preload_oodle_patch()
 
 def _probe_key_list(aes_key: Optional[str], try_all_keys: bool) -> List[tuple]:
     """Build the ordered (title, key) probe list: no-key first, then the
-    stored key store, then the explicitly provided/default key."""
-    probes: List[tuple] = [(None, None)]
+    stored key store, then the explicitly provided/default key.
+
+    Keys whose scheme isn't plain ``aes-256`` (xor/derived/custom/unity-cn)
+    are returned with a ``(entry, False)`` style marker so the caller can skip
+    blindly handing them to pyuepak's single-key ``set_key`` - those archives
+    need the CUE4Parse bridge. Returns list of ``(title, key, can_set_key)``.
+    """
+    probes: List[tuple] = [(None, None, True)]
     seen_keys = {None}
     if try_all_keys:
         try:
@@ -139,16 +145,33 @@ def _probe_key_list(aes_key: Optional[str], try_all_keys: bool) -> List[tuple]:
 
             for entry in KeyStore().list():
                 key = (entry.aes_key or "").strip()
-                if key and key not in seen_keys:
-                    probes.append((entry.title, key))
+                scheme = getattr(entry, "scheme", None)
+                can_set = _is_aes_keyable(scheme, key)
+                if key and can_set and key not in seen_keys:
+                    probes.append((entry.title, key, True))
                     seen_keys.add(key)
         except Exception:
             pass
     if aes_key:
         key = aes_key.strip()
         if key and key not in seen_keys:
-            probes.append(("default", key))
+            probes.append(("default", key, True))
     return probes
+
+
+def _is_aes_keyable(scheme: Optional[str], key: str) -> bool:
+    """True when a key should be handed to pyuepak's single-key ``set_key``.
+
+    Only plain AES-256 (or absent scheme) with a plausible note is keyable;
+    xor/derived/custom/unity schemes and non-hex keys go through the bridge.
+    """
+    s = (scheme or "aes-256").lower()
+    if s not in ("aes-256", "aes-256+dynamic", "fortnite", "huwei"):
+        return False
+    cleaned = key.lower().replace("0x", "", 1).replace(" ", "")
+    if not cleaned or len(cleaned) < 32:
+        return False
+    return all(c in "0123456789abcdef" for c in cleaned)
 
 
 def pak_footer_version(path: str) -> Optional[int]:
@@ -206,10 +229,10 @@ class PakArchive:
         attempts = []
         _oodle_ctx.archive_path = self.path
         try:
-            for title, key in probes:
+            for title, key, can_set in probes:
                 attempts.append(title or "no key")
                 pak = PakFile()
-                if key:
+                if key and can_set:
                     try:
                         pak.set_key(key)
                     except ValueError as exc:

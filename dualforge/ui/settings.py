@@ -63,7 +63,10 @@ class Settings:
             return settings
         for key in asdict(settings):
             if key in raw:
-                setattr(settings, key, raw[key])
+                value = raw[key]
+                if key == "donation_url" and not str(value or "").strip():
+                    continue
+                setattr(settings, key, value)
         return settings
 
     def save(self) -> None:

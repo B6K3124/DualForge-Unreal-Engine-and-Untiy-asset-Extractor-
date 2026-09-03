@@ -65,8 +65,20 @@ def extract_file(path: str, options: ExtractOptions) -> ExtractResult:
 
 def _extract_unity(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
     archive = UnityArchive(path)
-    if options.aes_key:
-        archive.set_decrypt_key(options.aes_key)
+    key = options.aes_key
+    scheme = "aes-256"
+    if not key:
+        try:
+            from dualforge.unreal import KeyStore
+
+            entry = KeyStore().find_for_archive(path)
+            if entry is not None:
+                key = entry.aes_key
+                scheme = entry.scheme or "aes-256"
+        except Exception:
+            pass
+    if key:
+        archive.set_decrypt_key(key, scheme=scheme)
     assets = [a for a in archive.assets()]
     if options.type_filter:
         assets = [a for a in assets if a.type_name in options.type_filter]
@@ -140,7 +152,22 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
         from dualforge.unreal.uex_adapter import find_usmap
 
         usmap = find_usmap(str(Path(path).parent))
-    entries = bridge.list_files(path, aes_key=options.aes_key, usmap=usmap)
+    dynamic_keys = None
+    scheme = None
+    if not options.aes_key:
+        try:
+            from dualforge.unreal import KeyStore
+
+            entry = KeyStore().find_for_archive(path)
+            if entry is not None and not options.aes_key:
+                dynamic_keys = entry.dynamic_keys or None
+                scheme = entry.scheme if entry.scheme not in ("", "aes-256") else None
+        except Exception:
+            pass
+    entries = bridge.list_files(
+        path, aes_key=options.aes_key, usmap=usmap,
+        dynamic_keys=dynamic_keys, scheme=scheme,
+    )
     if options.files:
         entries = [e for e in entries if e.get("path") in set(options.files)]
     total = len(entries)
@@ -154,6 +181,8 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
                 aes_key=options.aes_key,
                 files=[str(entry.get("path", "")) for entry in entries],
                 usmap=usmap,
+                dynamic_keys=dynamic_keys,
+                scheme=scheme,
             )
         except UnrealError as exc:
             result.errors.append(f"{exc}{_chunk_key_hint(path)}")

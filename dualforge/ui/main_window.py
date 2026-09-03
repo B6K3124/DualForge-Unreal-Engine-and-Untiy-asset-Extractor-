@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -119,7 +118,8 @@ class ExtractWorker(QThread):
                 cancelled = True
                 break
             except Exception as exc:
-                errors.append(f"{Path(path).name}: {exc}")
+                self.failed.emit(f"{Path(path).name}: {exc}")
+                return
             else:
                 extracted.extend(result.extracted)
                 errors.extend(result.errors)
@@ -630,7 +630,9 @@ class MainWindow(QMainWindow):
         return len(paths)
 
     def _load_container(self, path: str) -> None:
-        options = ExtractOptions(out_dir=tempfile.mkdtemp(prefix="dualforge_"), progress=None)
+        container_dir = Path(self.settings.cache_dir()) / Path(path).stem
+        container_dir.mkdir(parents=True, exist_ok=True)
+        options = ExtractOptions(out_dir=str(container_dir), progress=None)
         result = extract_file(path, options)
         for written in result.extracted:
             self._add_file(path, Path(written).name, "extracted", 0, {"engine": "container", "path": written, "kind": "extracted", "archive": path, "size": 0})
@@ -638,7 +640,7 @@ class MainWindow(QMainWindow):
             self.log.appendPlainText(f"error: {error}")
         self.preview_panel.show_hero(
             title="Container decompressed",
-            hint=f"{len(result.extracted)} file(s) written to a temporary folder.",
+            hint=f"{len(result.extracted)} file(s) written to the preview cache.",
         )
         self.item_count.setText(f"{len(result.extracted)} files")
 
@@ -873,12 +875,18 @@ class MainWindow(QMainWindow):
         item = self.tree.itemAt(position)
         if item is None:
             return
+        data = item.data(0, USER_ROLE) or {}
         menu = QMenu(self)
         preview_action = menu.addAction("Preview")
         export_action = menu.addAction("Export Selected...")
         open_action = None
         if self._last_out_dir:
             open_action = menu.addAction("Open Last Output Folder")
+        reveal_action = None
+        if not data.get("folder"):
+            extract_dir = self._extract_dir_for(data)
+            if extract_dir:
+                reveal_action = menu.addAction("Open Containing Folder")
         chosen = menu.exec(self.tree.viewport().mapToGlobal(position))
         if chosen is preview_action:
             self._show_preview()
@@ -886,6 +894,17 @@ class MainWindow(QMainWindow):
             self.extract_selected()
         elif chosen is not None and open_action is not None and chosen is open_action:
             self._open_folder(self._last_out_dir)
+        elif chosen is not None and reveal_action is not None and chosen is reveal_action:
+            self._open_folder(extract_dir)
+
+    def _extract_dir_for(self, data: dict) -> Optional[str]:
+        ext_path = data.get("path", "") or ""
+        if data.get("kind") == "extracted":
+            dir_path = Path(ext_path).parent if ext_path else None
+            return str(dir_path) if dir_path and dir_path.is_dir() else None
+        if self._last_out_dir:
+            return self._last_out_dir
+        return None
 
     # ---- extraction ----
 
@@ -893,13 +912,46 @@ class MainWindow(QMainWindow):
         if not self.current_path:
             QMessageBox.information(self, "DualForge", "Open an archive or folder first.")
             return
-        self._start_extract(types=None)
+        if self.worker is not None and self.worker.isRunning():
+            return
+        groups = self._all_groups()
+        if not groups and self._folder_mode:
+            groups = {self.current_path: None}
+        self._start_extract(groups, types=None)
 
     def extract_selected(self) -> None:
         if not self.current_path:
             QMessageBox.information(self, "DualForge", "Open an archive or folder first.")
             return
-        self._start_extract(types=None)
+        if self.worker is not None and self.worker.isRunning():
+            return
+        groups = self._checked_groups()
+        if not groups:
+            if self._folder_mode:
+                QMessageBox.information(
+                    self, "DualForge", "Check the assets to export, then press Export Selected."
+                )
+                return
+            groups = {self.current_path: None}
+        self._start_extract(groups, types=None)
+
+    def _all_groups(self) -> Dict[str, Optional[List[str]]]:
+        """Build an (archive -> files) map covering every file in the tree."""
+        groups: Dict[str, Optional[List[str]]] = {}
+        for index in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(index)
+            for leaf in iter_leaves(top):
+                data = leaf.data(0, USER_ROLE) or {}
+                if data.get("folder"):
+                    continue
+                archive = data.get("archive")
+                if not archive:
+                    continue
+                if groups.get(archive) is None:
+                    groups[archive] = [data.get("path", "")]
+                else:
+                    groups[archive].append(data.get("path", ""))
+        return groups
 
     def _checked_groups(self) -> Dict[str, List[str]]:
         groups: Dict[str, List[str]] = {}
@@ -913,17 +965,9 @@ class MainWindow(QMainWindow):
                 groups.setdefault(archive, []).append(data.get("path", ""))
         return groups
 
-    def _start_extract(self, types: Optional[List[str]]) -> None:
-        if self.worker is not None and self.worker.isRunning():
-            return
-        groups = self._checked_groups()
+    def _start_extract(self, groups: Dict[str, Optional[List[str]]], types: Optional[List[str]]) -> None:
         if not groups:
-            if self._folder_mode:
-                QMessageBox.information(
-                    self, "DualForge", "Check the assets to export, then press Export Selected."
-                )
-                return
-            groups = {self.current_path: None}
+            return
         if any(archive.lower().endswith((".utoc", ".ucas")) for archive in groups):
             if not UnrealBridge().available():
                 QMessageBox.warning(
@@ -1031,8 +1075,9 @@ class MainWindow(QMainWindow):
         self._key_list = QListWidget()
         entries = store.list()
         for entry in entries:
+            scheme = getattr(entry, "scheme", "aes-256")
             self._key_list.addItem(
-                f"{entry.title}  ({entry.engine})  -  "
+                f"{entry.title}  ({entry.engine}/{scheme})  -  "
                 f"{entry.aes_key[:8]}...{entry.aes_key[-8:] if len(entry.aes_key) > 8 else ''}"
             )
         layout.addWidget(self._key_list, 1)
@@ -1048,15 +1093,27 @@ class MainWindow(QMainWindow):
         def add_key() -> None:
             key_dialog = KeyDialog(dialog)
             if key_dialog.exec() == QDialog.DialogCode.Accepted:
-                title, key, engine = key_dialog.values()
+                title, key, engine, scheme, guid, params_text = key_dialog.values()
                 if not title or not key:
                     QMessageBox.warning(dialog, "DualForge", "Title and key are required.")
                     return
-                store.add(title, key, engine=engine)
-                self._key_list.addItem(
-                    f"{title}  ({engine})  -  {key[:8]}...{key[-8:] if len(key) > 8 else ''}"
+                parameters = {}
+                if params_text:
+                    for item in params_text.split(","):
+                        if "=" in item:
+                            k, v = item.split("=", 1)
+                            parameters[k.strip()] = v.strip()
+                store.add(
+                    title, key,
+                    engine=engine,
+                    scheme=scheme or "aes-256",
+                    guid=guid,
+                    parameters=parameters,
                 )
-                self.log.appendPlainText(f"stored AES key for {title}")
+                self._key_list.addItem(
+                    f"{title}  ({engine}/{scheme})  -  {key[:8]}...{key[-8:] if len(key) > 8 else ''}"
+                )
+                self.log.appendPlainText(f"stored {scheme} key for {title}")
 
         def remove_key() -> None:
             row = self._key_list.currentRow()
@@ -1096,21 +1153,28 @@ class MainWindow(QMainWindow):
         apply_theme(QApplication.instance(), self.settings.theme)
         self._refresh_toolbar_icons()
 
+    DEFAULT_DONATION_URL = "https://ko-fi.com/b6000"
+
     def donate(self) -> None:
-        url = self.settings.donation_url.strip()
+        from dualforge import __version__
+
+        url = (self.settings.donation_url or "").strip()
         if not url:
-            QMessageBox.information(
-                self,
-                "Donate",
-                "No donation URL is configured yet.\n\n"
-                "Add your link under File \u2192 Settings \u2192 Donation URL, "
-                "and the Donate button will open your donation page.",
-            )
-            self.open_settings()
-            return
+            url = self.DEFAULT_DONATION_URL
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
-        QDesktopServices.openUrl(QUrl(url))
+        if QDesktopServices.openUrl(QUrl(url)):
+            self.log.appendPlainText(
+                f"opened donation page ({url}) - thank you for supporting DualForge {__version__}"
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Donate",
+                f"Could not open the donation page.\n\n{url}\n"
+                "Copy the link into your browser, or set a custom URL under "
+                "File \u2192 Settings \u2192 Donation URL.",
+            )
 
     def _show_about(self) -> None:
         from dualforge.ui.about import AboutDialog
@@ -1133,11 +1197,19 @@ class MainWindow(QMainWindow):
         if self._recent_menu is None:
             return
         self._recent_menu.clear()
-        for path in self.settings.recent_files:
-            action = self._recent_menu.addAction(Path(path).name)
-            action.setToolTip(path)
-            action.triggered.connect(lambda checked=False, p=path: self._load(p))
-        if not self.settings.recent_files:
+        files = [Path(p) for p in self.settings.recent_files]
+        names = [p.name for p in files]
+        from collections import Counter
+
+        dupes = {name for name, count in Counter(names).items() if count > 1}
+        for path in files:
+            label = path.name
+            if path.name in dupes and path.parent.name:
+                label = f"{path.name}  ({path.parent.name})"
+            action = self._recent_menu.addAction(label)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda checked=False, p=str(path): self._load(p))
+        if not files:
             empty = self._recent_menu.addAction("(no recent archives)")
             empty.setEnabled(False)
 
@@ -1165,12 +1237,80 @@ class MainWindow(QMainWindow):
     # ---- drag & drop ----
 
     def dragEnterEvent(self, event) -> None:
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        if not event.mimeData().hasUrls():
+            return
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path and Path(path).suffix.lower() in ARCHIVE_SUFFIXES:
+                event.acceptProposedAction()
+                return
 
     def dropEvent(self, event) -> None:
         urls = event.mimeData().urls()
-        if urls:
-            path = urls[0].toLocalFile()
-            if path:
-                self._load(path)
+        paths = [
+            url.toLocalFile()
+            for url in urls
+            if url.toLocalFile() and Path(url.toLocalFile()).suffix.lower() in ARCHIVE_SUFFIXES
+        ]
+        if not paths:
+            self.log.appendPlainText("dropped non-archive file(s); only game archives are accepted")
+            return
+        if len(paths) == 1:
+            self._load(paths[0])
+        else:
+            self.open_folder_from_paths(paths)
+
+    def open_folder_from_paths(self, paths: List[str]) -> None:
+        folder = str(Path(paths[0]).parent)
+        self._reset_session(folder_mode=True)
+        self.current_path = folder
+        self._set_engine(None)
+        self.log.clear()
+        self.log.appendPlainText(
+            f"dropped {len(paths)} archive(s) from {Path(folder).name}"
+        )
+        archives = sorted(set(paths), key=str.lower)
+        total = 0
+        for path in archives:
+            root = QTreeWidgetItem([Path(path).name])
+            root.setFlags(
+                root.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsAutoTristate
+            )
+            root.setCheckState(0, Qt.CheckState.Unchecked)
+            root.setIcon(0, make_folder_icon())
+            root.setData(0, USER_ROLE, {"folder": True, "archive": path, "path": Path(path).name})
+            self.tree.addTopLevelItem(root)
+            try:
+                detection = detect(path)
+                if detection is None:
+                    self.log.appendPlainText(f"unable to identify: {Path(path).name}")
+                    continue
+                if detection.engine == "unity":
+                    count = self._load_unity(path, root)
+                elif detection.engine == "unreal":
+                    count = self._load_unreal(path, root)
+                else:
+                    self.log.appendPlainText(
+                        f"skipping non-extractable archive: {Path(path).name}"
+                    )
+                    continue
+                total += count
+                self._open_archives.append(path)
+            except Exception as exc:
+                self.log.appendPlainText(f"error loading {Path(path).name}: {exc}")
+        self._collect_types(self._all_type_names())
+        self.item_count.setText(f"{total} assets in {len(archives)} archive(s)")
+        if not self._open_archives:
+            self.preview_panel.show_hero(
+                title="Could not read archives",
+                hint="None of the dropped archives could be parsed. Check the log.",
+            )
+        else:
+            self.preview_panel.show_hero(
+                title=f"Loaded {len(self._open_archives)} archive(s)",
+                hint=f"{total} assets in {Path(folder).name}",
+                pixmap=self._hero_pixmap(),
+            )
+        self._apply_filter()

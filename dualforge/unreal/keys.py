@@ -6,10 +6,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from dualforge.encryption.registry import KeyMaterial
+
 DEFAULT_ENDPOINTS = [
     "https://fortnitecentral.ga/api/v1/aes",
     "https://aes.ue4server.com/",
 ]
+
+
+DEFAULT_SCHEME = "aes-256"
+
+
+def _fold(text: str) -> str:
+    """Normalize a name for loose comparison: lowercase, drop non-alnum/spaces."""
+    return "".join(ch.lower() for ch in text if ch.isalnum())
 
 
 @dataclass
@@ -20,6 +30,45 @@ class KeyEntry:
     notes: str = ""
     updated: str = ""
     dynamic_keys: Dict[str, str] = field(default_factory=dict)
+    scheme: str = DEFAULT_SCHEME
+    guid: str = ""
+    parameters: Dict[str, str] = field(default_factory=dict)
+
+    def to_material(self) -> KeyMaterial:
+        """Build a registry ``KeyMaterial`` for this entry for use in pipelines."""
+        return KeyMaterial(
+            key_str=self.aes_key,
+            scheme=self.scheme,
+            guid=self.guid,
+            parameters=dict(self.parameters),
+        )
+
+    def as_dict(self) -> Dict[str, object]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "KeyEntry":
+        title = str(data.get("title", ""))
+        key = str(data.get("aes_key", data.get("key", "")) or "")
+        scheme = str(data.get("scheme", DEFAULT_SCHEME) or DEFAULT_SCHEME)
+        params = data.get("parameters")
+        if isinstance(params, dict):
+            params = {str(k): str(v) for k, v in params.items()}
+        else:
+            params = {}
+        dynamic_raw = data.get("dynamic_keys", data.get("dynamicKeys", {})) or {}
+        dynamic = {str(k): str(v) for k, v in dynamic_raw.items()} if isinstance(dynamic_raw, dict) else {}
+        return cls(
+            title=title,
+            aes_key=key,
+            engine=str(data.get("engine", "unreal") or "unreal"),
+            notes=str(data.get("notes", "") or ""),
+            updated=str(data.get("updated", "") or ""),
+            dynamic_keys=dynamic,
+            scheme=scheme,
+            guid=str(data.get("guid", "") or ""),
+            parameters=params,
+        )
 
 
 class KeyStore:
@@ -38,20 +87,12 @@ class KeyStore:
             if isinstance(value, str):
                 self._entries[key] = KeyEntry(title=key, aes_key=value)
             elif isinstance(value, dict):
-                dynamic = value.get("dynamic_keys") or value.get("dynamicKeys") or {}
-                self._entries[key] = KeyEntry(
-                    title=value.get("title", key),
-                    aes_key=value.get("aes_key", value.get("key", "")),
-                    engine=value.get("engine", "unreal"),
-                    notes=value.get("notes", ""),
-                    updated=value.get("updated", ""),
-                    dynamic_keys={str(k): str(v) for k, v in dynamic.items()},
-                )
+                self._entries[key] = KeyEntry.from_dict({"title": key, **value})
 
     def _save(self) -> None:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "w", encoding="utf-8") as fh:
-            json.dump({k: asdict(v) for k, v in self._entries.items()}, fh, indent=2)
+            json.dump({k: v.as_dict() for k, v in self._entries.items()}, fh, indent=2)
 
     def list(self) -> List[KeyEntry]:
         return list(self._entries.values())
@@ -63,6 +104,37 @@ class KeyStore:
     def get_entry(self, title: str) -> Optional[KeyEntry]:
         return self._entries.get(title)
 
+    def find_for_archive(self, archive_path: str) -> Optional[KeyEntry]:
+        """Best-effort match of a stored entry to an archive path.
+
+        Every path component (folder names and the file name) is matched
+        case-insensitively against stored entry titles, with the deepest
+        match scoring highest. This finds the game even when the pak lives in
+        ``Content/Paks``. Returns the best-scoring entry or None.
+        """
+        from pathlib import Path
+
+        path_lower = archive_path.replace("\\", "/").lower()
+        parts = [p for p in Path(path_lower).parts if p]
+        best: Optional[KeyEntry] = None
+        best_score = -1
+        for entry in self._entries.values():
+            title = entry.title.lower()
+            title_key = _fold(title)
+            score = -1
+            for depth, part in enumerate(parts):
+                part_key = _fold(part)
+                if part_key and part_key == title_key:
+                    score = max(score, 100 - depth)
+                elif part_key and len(part_key) >= 3 and (
+                    part_key in title_key or title_key in part_key
+                ):
+                    score = max(score, 50 - depth)
+            if score > best_score:
+                best_score = score
+                best = entry
+        return best if best_score >= 0 else None
+
     def add(
         self,
         title: str,
@@ -70,6 +142,9 @@ class KeyStore:
         engine: str = "unreal",
         notes: str = "",
         dynamic_keys: Optional[Dict[str, str]] = None,
+        scheme: str = DEFAULT_SCHEME,
+        guid: str = "",
+        parameters: Optional[Dict[str, str]] = None,
     ) -> None:
         if not title or not aes_key:
             raise ValueError("title and aes_key are required")
@@ -80,6 +155,9 @@ class KeyStore:
             notes=notes,
             updated=datetime.now(timezone.utc).isoformat(),
             dynamic_keys={str(k): str(v) for k, v in (dynamic_keys or {}).items()},
+            scheme=scheme or DEFAULT_SCHEME,
+            guid=guid or "",
+            parameters={str(k): str(v) for k, v in (parameters or {}).items()},
         )
         self._save()
 

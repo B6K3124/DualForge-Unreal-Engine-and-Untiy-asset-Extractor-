@@ -70,8 +70,15 @@ class PreviewWorker(QThread):
         self._signals = PreviewSignals()
         self.loaded = self._signals.loaded
         self.failed = self._signals.failed
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        self.requestInterruption()
 
     def run(self) -> None:
+        if self._cancelled or self.isInterruptionRequested():
+            return
         try:
             if self.item.engine == "unity":
                 payload = self._preview_unity()
@@ -80,8 +87,12 @@ class PreviewWorker(QThread):
             else:
                 payload = self._preview_unreal()
         except Exception as exc:
+            if self._cancelled or self.isInterruptionRequested():
+                return
             self.failed.emit(self.item.title, str(exc))
         else:
+            if self._cancelled or self.isInterruptionRequested():
+                return
             self.loaded.emit(payload)
 
     def _base_payload(self) -> dict:
@@ -261,21 +272,22 @@ class PreviewWorker(QThread):
                 )
             cached = helpers.read_cached(self.cache_dir, key, filename)
             if cached is None:
-                temp_dir = tempfile.mkdtemp(prefix="dualforge_preview_")
-                try:
-                    bridge.extract(
-                        self.item.archive_path,
-                        temp_dir,
-                        aes_key=self.item.aes_key,
-                        files=[self.item.entry or self.item.title],
-                    )
-                except Exception as exc:
-                    raise ValueError(f"preview extract failed: {exc}") from exc
-                found = list(Path(temp_dir).rglob("*"))
-                candidate = next((p for p in found if p.is_file()), None)
-                if candidate is None:
-                    raise ValueError("no file was extracted for preview")
-                cached = candidate.read_bytes()
+                with tempfile.TemporaryDirectory(prefix="dualforge_preview_") as temp_dir:
+                    try:
+                        bridge.extract(
+                            self.item.archive_path,
+                            temp_dir,
+                            aes_key=self.item.aes_key,
+                            files=[self.item.entry or self.item.title],
+                        )
+                    except Exception as exc:
+                        raise ValueError(f"preview extract failed: {exc}") from exc
+                    found = list(Path(temp_dir).rglob("*"))
+                    candidate = next((p for p in found if p.is_file()), None)
+                    if candidate is None:
+                        raise ValueError("no file was extracted for preview")
+                    cached = candidate.read_bytes()
+                    helpers.write_cached(self.cache_dir, key, filename, cached)
         payload["raw"] = cached
         image = helpers.sniff_image(cached)
         if image is not None:
@@ -673,10 +685,13 @@ class PreviewPanel(QStackedWidget):
         self._worker.start()
 
     def _cancel_preview(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait(2000)
-        self._worker = None
+        if self._worker is not None:
+            if self._worker.isRunning():
+                self._worker.cancel()
+                self._worker.wait(2000)
+            if self._worker.isRunning():
+                self._worker.terminate()
+            self._worker = None
         self.overlay.hide_overlay()
 
     def _on_worker_done(self) -> None:

@@ -28,14 +28,14 @@
 | Unreal UE5.4–5.8 | `.pak` v12 | pyuepak native | ✔ tests/test_pak.py; real game (TEKKEN 8, 20,778 files listed natively; Oodle entries require the game-shipped `oo2core_*.dll`) |
 | Unreal UE5.x | `.utoc` / `.ucas` (IoStore) | uex adapter (`dualforge/unreal/uex_adapter.py`, auto-EGame probing via `doctor`) | ✔ verified on TEKKEN 8: 279,410 files across 100 archives; raw files (.wem/.ini) extract byte-perfect (RIFF-validated); unversioned packages (`.uasset`) require a CUE4Parse mappings file — see `--usmap`/`DUALFORGE_USMAP` (same requirement as FModel; TEKKEN 8's usmap is not redistributable) |
 | Unreal | `.usmap` mappings (UE only — Unity never needs one) | `dualforge/unreal/usmap.py` (native parser/rebuilder: header, versioning block, 37 property kinds, zstd/brotli) + `usmap_dump.py` (Windows FNamePool dumper, `usmap dump` CLI / *Tools ▸ Generate USMAP* GUI, output auto-placed in `~/.dualforge`) | ✔ parser/writer round-trip vs CUE4Parse fixtures (40,567 names / 1,833 enums / 8,991 structs; rebuilt usmaps produce byte-identical CUE4Parse exports); 34 unit tests |
-| Unreal | AES-256 encrypted | auto-probe: no-key → key store (`keys.json`) → default key; FModel `Global.AESKeys.json` import + opt-in sync (FortniteCentral, aes.ue4server.com) | ✔ tests/test_unlock.py |
+| Unreal | AES-256 encrypted | auto-probe: no-key → key store (`keys.json`) → default key; FModel `Global.AESKeys.json` import + opt-in sync (FortniteCentral, aes.ue4server.com); per-entry `scheme`/`guid`/`parameters` persisted | ✔ tests/test_unlock.py |
 | Unreal | Oodle-compressed | game-shipped `oo2core_*.dll` (ctypes, never bundled/downloaded); auto-discovered in the pak's folder chain + `Binaries/`/`Engine/Binaries` subpaths | ✔ verified on TEKKEN 8 with the UE 5.7 engine-shipped `oo2core_9_win64.dll` (via `~/.dualforge`); texture/ini/`.wem` reads OK |
-| Unreal UE5.4–5.8 | per-chunk dynamic-key encryption | detected (footer peek); native single-key reader can't, CLI fallback attempted, FModel documented for dynamic keys | — |
+| Unreal | per-chunk / dynamic-key / scheme-based encryption (CUE4Parse GameTypes) | `dualforge/encryption` registry + presets (AES+XOR, derived AES, partial, custom round keys, Unity CN XOR); plain-AES keys open natively (pyuepak), non-AES schemes route through the CUE4Parse bridge (`UexAdapter` passes `scheme`→`game` and `dynamicKeys`); `keys test <pak>` verifies a scheme+key offline; `keys schemes` lists registered schemes/presets | ✔ tests/test_encryption.py, tests/test_unlock.py |
 | Unreal | hardcoded AES keys in game binaries | automated headless-Ghidra key hunt (`scripts/ghidra/ghidra_key_finder.py`): AES S-box signature scan + high-entropy hex-key harvest, top 32-byte candidates auto-added to the key store | ✔ tests/test_ghidra.py |
 | Unity 2019–2021 | `.unity3d` / `.bundle` / `.assets` | UnityPy | ✔ verified on real games (Raft 2021.3, CarX, Tabletop Simulator) |
 | Unity 2022.3 LTS | UnityFS v3, LZ4/LZ4HC blocks | UnityPy | — |
 | Unity 6 (6000.x, 6.3 LTS) | UnityFS, newer serialized formats | UnityPy + typetree fallback for undecodable objects | — |
-| Unity | CN decrypt keys | `UnityPy.set_assetbundle_decrypt_key` | — |
+| Unity | encrypt/decrypt keys (incl. CN Pro) | `UnityPy.set_assetbundle_decrypt_key`; `0x`-hex and 16-char keys normalized; `unity-cn` scheme can supply a literal XOR mask | — |
 | Unity | `.resS` / `.resource` / `.split*` sibling streams | eager pre-load into the UnityPy environment (`UnityArchive.load_sibling_streams`) | ✔ tests/test_unlock.py |
 | Audio (any) | WEM/FSB/OGG/XMA/ADPCM/... | vgmstream (subprocess), `.wem`-style preview sniffing | — (raw `.wem` extraction from real paks verified on TEKKEN 8; conversion needs vgmstream, not installed) |
 | Containers | zip / 7z / gzip / zstd / lz4 / lzma | dualforge/compression | — |
@@ -92,4 +92,5 @@ Engine versions are surfaced in the GUI (properties + preview meta: "Unity versi
 6. Engine-era verification matrix UE4.27–UE5.8 / Unity 2022.3 LTS + Unity 6 (done)
 7. Max-asset unlock: key auto-probe, game-folder Oodle discovery, FModel key import + multi-endpoint sync, UE5.4+ chunk-key detection/routing, Unity .resS streams, profile key binding (done)
 8. Automated Ghidra key hunt: headless `analyzeHeadless` lifecycle + ghidra_bridge, AES S-box signature scan, entropy key harvest, keystore auto-add (done)
-9. Licensing audit + EULA (next)
+9. Multi-key-type unlock: typed `KeyEntry` (scheme/guid/parameters), `dualforge/encryption` registry + pipeline + presets (AES, AES+XOR, derived AES, partial, custom round keys, Unity CN), `keys schemes`/`keys test` CLI, UI scheme selector, dynamic-key + scheme routing through the CUE4Parse bridge (done)
+10. Licensing audit + EULA (next)

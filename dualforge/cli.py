@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from dualforge import __version__
 from dualforge.compression import METHODS, is_available
@@ -51,7 +52,31 @@ def build_parser() -> argparse.ArgumentParser:
     keys_add.add_argument("title")
     keys_add.add_argument("aes_key")
     keys_add.add_argument("--engine", default="unreal")
+    keys_add.add_argument(
+        "--scheme",
+        default=None,
+        help="encryption scheme/preset (default: aes-256). See 'dualforge keys schemes'.",
+    )
+    keys_add.add_argument("--guid", default="", help="encryption key GUID (dynamic-key games)")
+    keys_add.add_argument(
+        "--param", action="append", default=[],
+        metavar="KEY=VALUE",
+        help="scheme parameter, e.g. xor_key=1122334455667788 (repeatable)",
+    )
     keys_add.set_defaults(key_handler=_cmd_keys_add)
+    keys_list = keys_sub.add_parser("schemes")
+    keys_list.set_defaults(key_handler=_cmd_keys_schemes)
+    keys_test = keys_sub.add_parser(
+        "test", help="test a key/scheme against an Unreal pak file",
+    )
+    keys_test.add_argument("pak", help="path to an encrypted .pak file")
+    keys_test.add_argument("--title", help="use this stored entry's scheme/key/params")
+    keys_test.add_argument("--aes", help="key to test (hex)")
+    keys_test.add_argument(
+        "--scheme", default="aes-256",
+        help="scheme to test with (only meaningful with --aes)",
+    )
+    keys_test.set_defaults(key_handler=_cmd_keys_test)
     keys_remove = keys_sub.add_parser("remove")
     keys_remove.add_argument("title")
     keys_remove.set_defaults(key_handler=_cmd_keys_remove)
@@ -153,10 +178,89 @@ def _cmd_keys_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_keys_schemes(args: argparse.Namespace) -> int:
+    from dualforge.encryption import registry
+    from dualforge.encryption.presets import PRESETS
+
+    print("registered schemes:")
+    for name in registry.list_schemes():
+        print(f"  {name}")
+    print("\ngame presets:")
+    for preset in PRESETS:
+        print(f"  {preset.name:<20} {preset.label}")
+    return 0
+
+
 def _cmd_keys_add(args: argparse.Namespace) -> int:
-    KeyStore().add(args.title, args.aes_key, engine=args.engine)
+    scheme = args.scheme or "aes-256"
+    from dualforge.encryption.registry import list_schemes
+
+    known = set(list_schemes())
+    from dualforge.encryption.presets import PRESETS
+
+    known |= {p.name for p in PRESETS}
+    if scheme not in known:
+        print(
+            f"warning: unknown scheme '{scheme}'. Known: {', '.join(sorted(known))}",
+            file=sys.stderr,
+        )
+    parameters = {}
+    for item in args.param:
+        if "=" in item:
+            k, v = item.split("=", 1)
+            parameters[k.strip()] = v.strip()
+    KeyStore().add(
+        args.title,
+        args.aes_key,
+        engine=args.engine,
+        scheme=scheme,
+        guid=args.guid,
+        parameters=parameters,
+    )
     print(f"added key for {args.title}")
     return 0
+
+
+def _cmd_keys_test(args: argparse.Namespace) -> int:
+    from dualforge.encryption.brute import validate_key, probe_pak_blocks
+
+    store = KeyStore()
+    if args.title:
+        entry = store.get_entry(args.title)
+        if entry is None:
+            print(f"no stored key for {args.title}", file=sys.stderr)
+            return 1
+        aes_key = entry.aes_key
+        scheme = entry.scheme or "aes-256"
+        parameters = dict(entry.parameters)
+        guid = entry.guid
+    else:
+        if not args.aes:
+            print("provide --title or --aes (and --scheme if non-standard)", file=sys.stderr)
+            return 1
+        aes_key = args.aes
+        scheme = args.scheme or "aes-256"
+        parameters = {}
+        guid = ""
+
+    raw = Path(args.pak).read_bytes()
+    blocks = probe_pak_blocks(raw)
+    if not blocks:
+        print("could not locate an encrypted index block in the pak footer", file=sys.stderr)
+        return 1
+    hits = 0
+    for block in blocks:
+        if validate_key(block, scheme, aes_key, Path(args.pak).name, guid, parameters):
+            hits += 1
+    if hits:
+        print(f"key OK (decrypted {hits}/{len(blocks)} index blocks with scheme '{scheme}')")
+        return 0
+    print(
+        f"key did NOT decrypt the index (scheme '{scheme}'). Check the scheme and "
+        f"--param values, or list stored keys with 'dualforge keys list'.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _cmd_keys_remove(args: argparse.Namespace) -> int:

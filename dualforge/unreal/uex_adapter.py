@@ -41,6 +41,18 @@ FOLDER_GAMES: List[Tuple[str, str]] = [
     ("valorant", "GAME_VALORANT"),
 ]
 
+# Map DualForge scheme/preset names to CUE4Parse EGame values so scheme-based
+# archives decrypt through the correct GameType profile.
+SCHEME_GAMES: Dict[str, str] = {
+    "delta-force": "GAME_DeltaForce",
+    "marvel-rivals": "GAME_MarvelRivals",
+    "snowbreak": "GAME_Snowbreak",
+    "wuthering-waves": "GAME_WutheringWaves",
+    "fortnite": "GAME_Fortnite",
+    "monster-jam": "GAME_MonsterJamShowdown",
+    "dragon-sword": "GAME_DragonSword3",
+}
+
 SEARCH_LIMIT = 1_000_000
 DOCTOR_TIMEOUT = 900
 SEARCH_TIMEOUT = 900
@@ -128,11 +140,19 @@ class UexAdapter:
     # ------------------------------------------------------------- public API
 
     def list_files(
-        self, pak: str, aes_key: Optional[str] = None, usmap: Optional[str] = None
+        self,
+        pak: str,
+        aes_key: Optional[str] = None,
+        usmap: Optional[str] = None,
+        dynamic_keys: Optional[Dict[str, str]] = None,
+        scheme: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         paks_dir = str(Path(pak).parent)
-        game = self._game_for(paks_dir, aes_key, usmap)
-        config = _write_config(paks_dir, aes_key, str(Path(pak).parent), [], game, usmap)
+        game = self._game_for(paks_dir, aes_key, usmap, scheme)
+        config = _write_config(
+            paks_dir, aes_key, str(Path(pak).parent), [],
+            game, usmap, dynamic_keys=dynamic_keys,
+        )
         try:
             output, stderr, code = self._run(
                 [
@@ -166,11 +186,16 @@ class UexAdapter:
         aes_key: Optional[str] = None,
         files: Optional[List[str]] = None,
         usmap: Optional[str] = None,
+        dynamic_keys: Optional[Dict[str, str]] = None,
+        scheme: Optional[str] = None,
     ) -> int:
         paks_dir = str(Path(pak).parent)
-        game = self._game_for(paks_dir, aes_key, usmap)
+        game = self._game_for(paks_dir, aes_key, usmap, scheme)
         roots = _normalize_vpaths(files or self._default_roots(pak, aes_key, usmap))
-        config = _write_config(paks_dir, aes_key, out_dir, roots, game, usmap)
+        config = _write_config(
+            paks_dir, aes_key, out_dir, roots, game, usmap,
+            dynamic_keys=dynamic_keys,
+        )
         try:
             args = ["export", "--profile", "dualforge", "--config", str(config)]
             if roots:
@@ -193,10 +218,20 @@ class UexAdapter:
         roots = {path.split("/", 1)[0] for path in (e["path"] for e in entries)}
         return sorted(roots)
 
-    def _game_for(self, paks_dir: str, aes_key: Optional[str], usmap: Optional[str] = None) -> str:
+    def _game_for(
+        self,
+        paks_dir: str,
+        aes_key: Optional[str],
+        usmap: Optional[str] = None,
+        scheme: Optional[str] = None,
+    ) -> str:
         cached = self._games.get(paks_dir)
         if cached:
             return cached
+        # A known scheme maps to a definitive GameType; prefer it over probing.
+        if scheme and scheme in SCHEME_GAMES:
+            self._games[paks_dir] = SCHEME_GAMES[scheme]
+            return SCHEME_GAMES[scheme]
         from dualforge.unreal.pak import pak_footer_version
 
         footer = None
@@ -262,6 +297,8 @@ def _write_config(
     roots: List[str],
     game: str,
     usmap: Optional[str] = None,
+    dynamic_keys: Optional[Dict[str, str]] = None,
+    custom_key: Optional[str] = None,
 ) -> Path:
     config = {
         "profiles": {
@@ -275,6 +312,11 @@ def _write_config(
             }
         }
     }
+    profile = config["profiles"]["dualforge"]
+    if dynamic_keys:
+        profile["dynamicKeys"] = {str(k): normalize_aes_key(v) for k, v in dynamic_keys.items() if v}
+    if custom_key:
+        profile["customKey"] = custom_key
     fd, path = tempfile.mkstemp(suffix=".json", prefix="dualforge_uex_")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(config, fh)

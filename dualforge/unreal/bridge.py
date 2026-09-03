@@ -23,12 +23,17 @@ class UnrealBridge:
         return [self.cli_path] + args
 
     def list_files(
-        self, pak: str, aes_key: Optional[str] = None, usmap: Optional[str] = None
+        self,
+        pak: str,
+        aes_key: Optional[str] = None,
+        usmap: Optional[str] = None,
+        dynamic_keys: Optional[Dict[str, str]] = None,
+        scheme: Optional[str] = None,
     ) -> List[Dict[str, object]]:
         self._require()
         uex = self._uex_adapter()
         if uex is not None:
-            return uex.list_files(pak, aes_key, usmap)
+            return uex.list_files(pak, aes_key, usmap, dynamic_keys=dynamic_keys, scheme=scheme)
         args = ["list", "--json", pak]
         if aes_key:
             args += ["--aes", aes_key]
@@ -42,11 +47,16 @@ class UnrealBridge:
         aes_key: Optional[str] = None,
         files: Optional[List[str]] = None,
         usmap: Optional[str] = None,
+        dynamic_keys: Optional[Dict[str, str]] = None,
+        scheme: Optional[str] = None,
     ) -> int:
         self._require()
         uex = self._uex_adapter()
         if uex is not None:
-            return uex.extract(pak, out_dir, aes_key, files, usmap)
+            return uex.extract(
+                pak, out_dir, aes_key, files, usmap,
+                dynamic_keys=dynamic_keys, scheme=scheme,
+            )
         args = ["extract", pak, "-o", out_dir]
         if aes_key:
             args += ["--aes", aes_key]
