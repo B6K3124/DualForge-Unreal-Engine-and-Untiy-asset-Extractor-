@@ -378,8 +378,13 @@ def find_java() -> Optional[str]:
 
 
 def _java_major(path: str) -> Optional[int]:
+    flags = 0
+    if os.name == "nt":
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        completed = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=30)
+        completed = subprocess.run(
+            [path, "-version"], capture_output=True, text=True, timeout=30, creationflags=flags
+        )
     except Exception:
         return None
     output = (completed.stderr or completed.stdout)
@@ -462,11 +467,15 @@ def ensure_ghidra_bridge(allow_install: bool, log: Callable[[str], None]) -> Non
                 "'pip install ghidra-bridge' or re-run with auto-install enabled."
             )
         log("ghidra_bridge not found - installing (pip install ghidra-bridge)...")
+        flags = 0
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         completed = subprocess.run(
             [sys.executable, "-m", "pip", "install", "ghidra-bridge>=1.0"],
             capture_output=True,
             text=True,
             timeout=300,
+            creationflags=flags,
         )
         if completed.returncode != 0:
             raise RuntimeError(

@@ -97,13 +97,32 @@ class DriverRegistry:
         self._ensure_loaded()
         best: Optional[GameDriver] = None
         best_score = 0.0
+        best_is_generic = False
         for driver in self._drivers.values():
             if engine and driver.engine not in (engine, "auto"):
                 continue
             score = driver.matches(archive_path, mount)
-            if score > best_score:
+            if score <= 0:
+                continue
+            # A "generic" driver (no game fragments and no archive patterns) is
+            # only ever scored on the weak engine-baseline, so it represents
+            # "unknown game" rather than a specific title.  When a specific
+            # driver also only reaches that baseline (i.e. no fragment or
+            # pattern actually matched), it is an ambiguous tie — prefer the
+            # generic driver so we never mislabel an unknown game as a known one.
+            is_generic = (
+                not driver.game_fragments
+                and not driver.archive_patterns
+                and driver.engine not in ("auto", "")
+            )
+            if (
+                best is None
+                or score > best_score
+                or (score == best_score and is_generic and not best_is_generic)
+            ):
                 best_score = score
                 best = driver
+                best_is_generic = is_generic
         return best if best_score > 0 else None
 
     # ── file I/O ──────────────────────────────────────────────────────

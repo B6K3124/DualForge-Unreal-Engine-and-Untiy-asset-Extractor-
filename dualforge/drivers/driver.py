@@ -26,7 +26,7 @@ class GameDriver:
     version: str = DRIVER_VERSION
 
     # ── engine ────────────────────────────────────────────────────────
-    engine: str = "auto"  # "unity" | "unreal" | "auto"
+    engine: str = "auto"  # "unity" | "unreal" | "bethesda" | "cdpr" | "auto"
 
     # ── detection ─────────────────────────────────────────────────────
     game_fragments: List[str] = field(default_factory=list)
@@ -126,6 +126,12 @@ class GameDriver:
             elif self.engine == "unity" and any(
                 text.endswith(ext) for ext in (".unity3d", ".bundle", ".assetbundle", ".assets")
             ):
+                score += 10.0
+            elif self.engine == "bethesda" and any(
+                text.endswith(ext) for ext in (".bsa", ".ba2")
+            ):
+                score += 10.0
+            elif self.engine == "cdpr" and text.endswith(".archive"):
                 score += 10.0
         return score
 

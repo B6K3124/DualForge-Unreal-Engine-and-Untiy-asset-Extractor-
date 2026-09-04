@@ -180,6 +180,50 @@ def test_registry_has_builtin_drivers():
     assert "generic-unreal" in names
 
 
+def test_registry_has_popular_moddable_games():
+    names = registry.names()
+    expect = [
+        # bethesda
+        "oblivion", "fallout-new-vegas",
+        # unity
+        "valheim", "subnautica", "grounded", "cities-skylines",
+        "kerbal-space-program", "sons-of-the-forest", "seven-days-to-die",
+        # unreal
+        "lethal-company", "deep-rock-galactic", "satisfactory",
+        # documented-but-unsupported (huge communities)
+        "cyberpunk-2077", "baldurs-gate-3",
+    ]
+    for name in expect:
+        assert name in names, f"missing driver: {name}"
+
+
+def test_popular_game_drivers_are_valid_json():
+    names = {d.name: d for d in BUILTIN_DRIVERS}
+    for name, driver in names.items():
+        text = driver.to_json()
+        raw = json.loads(text)
+        assert DRIVER_MAGIC in raw
+        assert raw["name"] == driver.name
+
+
+def test_unsupported_format_drivers_do_not_hijack():
+    """The REDengine / Larian drivers must not match arbitrary .archive/.pak
+    files just by extension, or they'd mis-route every such archive."""
+    from dualforge.drivers import GameDriver
+
+    cp = GameDriver(name="cyberpunk-2077", label="Cyberpunk 2077", engine="auto",
+                    game_fragments=["cyberpunk"])
+    bg3 = GameDriver(name="baldurs-gate-3", label="Baldur's Gate 3", engine="auto",
+                     game_fragments=["baldurs gate 3", "BaldursGate3"])
+    unrelated_archive = cp.matches("/games/SomeOtherGame/archive/engine4.archive")
+    unrelated_pak = bg3.matches("/games/SomeOtherGame/Pak/foo.pak")
+    assert unrelated_archive == 0.0
+    assert unrelated_pak == 0.0
+    # They still win when the path names the game.
+    assert cp.matches("/games/Cyberpunk 2077/r6/archive.pak") > 0.0
+    assert bg3.matches("/games/BaldursGate3/Data/Shared.pak") > 0.0
+
+
 def test_registry_builtin_count():
     assert len(BUILTIN_DRIVERS) >= 14
     assert len(registry.list()) >= 14
@@ -411,4 +455,39 @@ def test_build_driver_from_unrecognized_archive(tmp_path):
     assert isinstance(driver, GameDriver)
     assert driver.engine in ("auto", "unity", "unreal")
     assert driver.notes
+
+
+def test_registry_match_prefers_generic_on_ambiguous_tie():
+    """An unknown game (no fragment/pattern matched) must not be mislabeled as
+    a specific title when every unreal driver only ties on the engine-baseline.
+    Regression: unknown paks like 'ABInfinite' used to match 'fortnite' just
+    because fortnite happened to be iterated first."""
+    from dualforge.drivers.registry import DriverRegistry
+
+    reg = DriverRegistry()
+    reg._ensure_loaded()
+    # An unknown game path (no fragment/pattern matched) must fall back to
+    # generic rather than to whichever specific driver is iterated first.
+    result = reg.match(
+        "/games/UnknownTitle/Content/Paks/pakchunk0-WindowsNoEditor.pak"
+    )
+    assert result is not None
+    assert result.name == "generic-unreal"
+    assert result.egame == ""
+
+    # A driver that genuinely matches its game fragment still wins.
+    ab = reg.match("/games/ABInfinite/ABInfinite/Content/Paks/pakchunk0-WindowsNoEditor.pak")
+    assert ab is not None
+    assert ab.name == "ab-infinite"
+
+    # A driver that matches a fragment still wins.
+    fortnite = reg.match("/games/FortniteGame/Content/Paks/pakchunk0-Windows.pak")
+    assert fortnite is not None
+    assert fortnite.name == "fortnite"
+
+    # A driver that matches only via its archive pattern still wins.
+    tekken = reg.match("/games/Anything/pakchunk0-Windows.pak")
+    assert tekken is not None
+    assert tekken.name in (d.name for d in reg._drivers.values() if d.archive_patterns)
+    assert tekken.name != "generic-unreal"
 

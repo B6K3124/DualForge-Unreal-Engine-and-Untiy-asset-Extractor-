@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     extract_parser = sub.add_parser("extract", help="extract assets from an archive")
     extract_parser.add_argument("path", help="archive to extract")
     extract_parser.add_argument("-o", "--out", required=True, help="output directory")
-    extract_parser.add_argument("--engine", choices=["auto", "unity", "unreal"], default="auto")
+    extract_parser.add_argument("--engine", choices=["auto", "unity", "unreal", "bethesda", "cdpr"], default="auto")
     extract_parser.add_argument("--aes", help="AES-256 key (hex) for encrypted Unreal archives")
     extract_parser.add_argument(
         "--usmap",
@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     driver_match.add_argument("archive", help="path to an archive file")
     driver_match.add_argument("--mount", default="", help="pak mount point hint")
     driver_match.add_argument(
-        "--engine", choices=["unity", "unreal"], help="filter by engine",
+        "--engine", choices=["unity", "unreal", "bethesda", "cdpr"], help="filter by engine",
     )
     driver_match.set_defaults(driver_handler=_cmd_drivers_match)
     driver_create = driver_sub.add_parser(
@@ -183,6 +183,38 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--out", help="output file; if set, saves the driver and registers it",
     )
     driver_create.set_defaults(driver_handler=_cmd_drivers_create)
+
+    crack_parser = sub.add_parser(
+        "crack",
+        help="auto-detect the game exe and crack its AES key via Ghidra",
+    )
+    crack_sub = crack_parser.add_subparsers(dest="crack_command")
+    crack_hunt = crack_sub.add_parser("run", help="run the auto-crack pipeline")
+    crack_hunt.add_argument("path", help="a game .pak or the game install folder")
+    crack_hunt.add_argument(
+        "--no-download", action="store_true",
+        help="do not download Ghidra/JRE; fail if not already installed",
+    )
+    crack_hunt.add_argument(
+        "--ghidra-home", help="explicit Ghidra install root (overrides auto-detection)",
+    )
+    crack_hunt.add_argument(
+        "--startup-timeout", type=int, default=300,
+        help="seconds to wait for Ghidra to start (default: 300)",
+    )
+    crack_hunt.add_argument("--title", help="title to store the cracked key under")
+    crack_hunt.add_argument(
+        "--no-save", action="store_true", help="validate candidates but do not save keys",
+    )
+    crack_hunt.add_argument(
+        "--all-binaries", action="store_true",
+        help="scan every detected executable instead of just the top-scored one",
+    )
+    crack_hunt.set_defaults(crack_handler=_cmd_crack_run)
+    crack_status = crack_sub.add_parser(
+        "status", help="report the Ghidra/JRE toolchain status",
+    )
+    crack_status.set_defaults(crack_handler=_cmd_crack_status)
     return parser
 
 
@@ -602,6 +634,112 @@ def _cmd_drivers_create(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_crack_status(args: argparse.Namespace) -> int:
+    from dualforge.ghidra.manager import toolchain_status
+
+    status = toolchain_status()
+    print(f"ghidra        : {status['ghidra'] or 'not found'}")
+    print(f"java          : {status['java'] or 'not found'}")
+    if status["java"]:
+        print(f"java major    : {status['java_major']}")
+    print(f"cache root    : {status['cache_root']}")
+    print(f"ready to hunt : {'yes' if status['ready'] else 'no'}")
+    if not status["ready"]:
+        print("run 'dualforge crack run <pak-or-folder>' to auto-download the toolchain")
+    return 0
+
+
+def _cmd_crack_run(args: argparse.Namespace) -> int:
+    if not args.path:
+        print("usage: dualforge crack run <pak-or-folder>", file=sys.stderr)
+        return 2
+    if getattr(args, "all_binaries", False):
+        from dualforge.crack import crack_all
+
+        def _log(msg: str) -> None:
+            print(f"  {msg}", file=sys.stderr)
+
+        download = not args.no_download
+        try:
+            result = crack_all(
+                args.path,
+                download=download,
+                startup_timeout=args.startup_timeout,
+                ghidra_home=args.ghidra_home,
+                save_keys=not args.no_save,
+                title=args.title,
+                log=_log,
+            )
+        except (RuntimeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"validation pak : {result['pak']}")
+        scanned = result.get("scanned", [])
+        print(f"binaries scanned: {len(scanned)}")
+        for exe in scanned:
+            print(f"  {exe}")
+        print(f"candidate keys : {len(result['candidates'])}")
+        verified = result["verified"]
+        print(f"verified keys  : {len(verified)}")
+        for key in verified:
+            print(f"  {key}")
+        if result["status"] == "ok":
+            for key in verified:
+                print(f"cracked key    : {key}")
+            if result["saved"]:
+                print("saved to key store:", ", ".join(result['saved']))
+            else:
+                print("(keys not saved; re-run without --no-save to persist)")
+            return 0
+        # status == "no_valid_key"
+        print("no candidate validated against the pak; the archive format may be")
+        print("proprietary/obfuscated or the key is runtime/session-bound.")
+        print("(see 'dualforge keys test' for details)")
+        return 1
+
+    from dualforge.crack import crack
+
+    download = not args.no_download
+    try:
+        result = crack(
+            args.path,
+            download=download,
+            startup_timeout=args.startup_timeout,
+            ghidra_home=args.ghidra_home,
+            save_keys=not args.no_save,
+            title=args.title,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"exe            : {result['exe']}")
+    print(f"validation pak : {result['pak']}")
+    if result["status"] == "hunt_failed":
+        print(f"Ghidra hunt failed (exit {result['returncode']})")
+        print(result["detail"][-1200:])
+        return 1
+    print(f"candidate keys : {len(result['candidates'])}")
+    verified = result["verified"]
+    print(f"verified keys  : {len(verified)}")
+    for key in verified:
+        print(f"  {key}")
+    if result["status"] == "ok":
+        for key in verified:
+            print(f"cracked key    : {key}")
+        if result["saved"]:
+            print("saved to key store:", ", ".join(result['saved']))
+        else:
+            print("(keys not saved; re-run without --no-save to persist)")
+        return 0
+    # status == "no_valid_key"
+    print("no candidate validated against the pak; the archive format may be")
+    print("proprietary/obfuscated or the key is runtime/session-bound.")
+    print("(see 'dualforge keys test' for details)")
+    return 1
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -617,6 +755,9 @@ def main(argv=None) -> int:
     driver_handler = getattr(args, "driver_handler", None)
     if driver_handler:
         return driver_handler(args)
+    crack_handler = getattr(args, "crack_handler", None)
+    if crack_handler:
+        return crack_handler(args)
     parser.print_help()
     return 0
 

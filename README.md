@@ -113,7 +113,7 @@ DualForge never ships or downloads keys or Oodle DLLs — it uses what you (or t
 3. **Open the pak** — encrypted archives are opened by auto-probing every stored key (no-key → key store → default key). The log reports which key unlocked the archive. Toggle probing off via *Settings ▸ "Try every key from the key store before failing"* if you prefer only the default key.
 4. **Oodle paks** — the game-shipped `oo2core_*.dll` is found automatically next to the pak (its folder chain and `Binaries/`/`Engine/` subpaths), so no manual copying is normally needed. The error message lists every location searched if it is missing.
 5. **UE 5.4+ per-chunk / dynamic-key / non-AES encryption** — paks using per-chunk dynamic keys or a non-standard scheme cannot be read natively (single AES key only). DualForge detects these, routes them to the CUE4Parse bridge with the correct `game` profile and dynamic keys (GUID-keyed entries), and reports the best-known fallback. Use `dualforge keys test <pak>` to confirm a scheme+key offline before committing to it.
-6. **Automated key hunting (Ghidra)** — if a game's key is not in any community list and you have the game binary, DualForge can find it for you: it launches headless Ghidra, scans the binary's memory for crypto constants (AES S-box) and high-entropy hex keys, and adds the best 32-byte candidates straight into the key store. From the GUI use **Tools ▸ Ghidra Key Hunt...** (check the setup first, then start the hunt — live log + results table), or from a terminal:
+6. **Automated key hunting (Ghidra)** — if a game's key is not in any community list and you have the game binary, DualForge can find it for you: it launches headless Ghidra, scans the binary's memory for crypto constants (AES S-box) and high-entropy hex keys, and adds the best 32-byte candidates straight into the key store. From the GUI use **Tools ▸ Ghidra Key Hunt...** (check the setup first, then start the hunt — live log + results table). Tick **"Scan ALL detected binaries in the install folder"** to auto-detect every game executable under a folder and hunt them all in one pass, so you never have to figure out which `.exe` holds the key. From a terminal:
 
    ```powershell
    python scripts\ghidra\ghidra_key_finder.py "C:\Game\Game.exe"
@@ -123,6 +123,14 @@ DualForge never ships or downloads keys or Oodle DLLs — it uses what you (or t
    ```
 
    The scan streams memory blocks in 4 MiB chunks over the bridge (base64), reports every hit with its address and candidate keys (`<binary>.keys.json`), and writes the top candidates into `~/.dualforge/keys.json` as `"<binary> [ghidra-N]"` — the pak auto-probe then tries them automatically. Only 32-byte candidates are stored (16-byte keys would break probing). Analysis runs with `-deleteProject` in a temp dir; nothing is left behind.
+
+   For the full end-to-end pipeline (auto-detect the game exe → provision Ghidra/JRE → hunt → validate candidates against a real pak → save verified keys) use the `crack` CLI:
+
+   ```powershell
+   python main.py crack run "C:\Game"                  # scan the top-scored executable
+   python main.py crack run "C:\Game" --all-binaries   # scan every detected executable
+   python main.py crack status                         # toolchain readiness
+   ```
 
 ### CLI
 

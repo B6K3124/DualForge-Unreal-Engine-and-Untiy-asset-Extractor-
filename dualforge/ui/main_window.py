@@ -55,7 +55,7 @@ from dualforge.ui.tree_builder import (
 from dualforge.unity import UnityArchive
 from dualforge.unreal import KeyStore, PakArchive, PakError, UnrealBridge
 
-ARCHIVE_SUFFIXES = (".pak", ".utoc", ".ucas", ".unity3d", ".unityweb", ".bundle", ".assets", ".assetbundle")
+ARCHIVE_SUFFIXES = (".pak", ".utoc", ".ucas", ".unity3d", ".unityweb", ".bundle", ".assets", ".assetbundle", ".archive")
 
 
 class WorkerSignals(QObject):
@@ -183,11 +183,13 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(make_app_icon())
 
         self.current_path: Optional[str] = None
+        self.current_executable: Optional[str] = None
         self.current_engine: Optional[str] = None
         self.unity_archive: Optional[UnityArchive] = None
         self.unity_assets: Dict[Tuple[str, str], object] = {}
         self._unity_engine_versions: Dict[str, Tuple[str, int]] = {}
         self.pak_archives: Dict[str, PakArchive] = {}
+        self._cdpr_archives: Dict[str, object] = {}
         self.unreal_entries: List[str] = []
         self._tree_builder: Optional[AssetTreeBuilder] = None
         self._folder_mode = False
@@ -489,10 +491,13 @@ class MainWindow(QMainWindow):
     def _reset_session(self, folder_mode: bool = False) -> None:
         self._folder_mode = folder_mode
         self._open_archives = []
+        if not folder_mode:
+            self.current_executable = None
         self.unity_archive = None
         self.unity_assets.clear()
         self._unity_engine_versions.clear()
         self.pak_archives.clear()
+        self._cdpr_archives.clear()
         self.unreal_entries = []
         self.tree.clear()
         self._tree_builder = AssetTreeBuilder(self.tree)
@@ -536,6 +541,8 @@ class MainWindow(QMainWindow):
                 self._load_unity(path)
             elif detection.engine == "unreal":
                 self._load_unreal(path)
+            elif detection.engine == "cdpr":
+                self._load_cdpr(path)
             elif detection.engine == "container":
                 self._load_container(path)
             else:
@@ -656,6 +663,39 @@ class MainWindow(QMainWindow):
         self.item_count.setText(f"{len(paths)} files")
         return len(paths)
 
+    def _load_cdpr(self, path: str, root: Optional[QTreeWidgetItem] = None) -> int:
+        from dualforge.cdpr import RedArchive, RedError
+
+        try:
+            archive = RedArchive(path)
+        except RedError as exc:
+            self.log.appendPlainText(f"failed to open REDengine archive: {exc}")
+            return 0
+        self._cdpr_archives[path] = archive
+        if root is not None:
+            builder = AssetTreeBuilder(self.tree, root=root)
+            self._tree_builder = builder
+        entries = list(archive.list_files())
+        for entry in entries:
+            hash_int = int(Path(entry).stem, 16)
+            entry_data = archive.get_entry(entry)
+            size = 0
+            if entry_data is not None:
+                for si in range(entry_data.segments_start, entry_data.segments_end):
+                    if si < len(archive._segments):
+                        size += archive._segments[si].size
+            self._add_file(
+                path,
+                entry,
+                "file",
+                size,
+                {"engine": "cdpr", "path": entry, "kind": "file", "archive": path, "size": size, "hash": f"0x{hash_int:016x}"},
+                root,
+            )
+        self.log.appendPlainText(f"loaded {len(entries)} REDengine files from {Path(path).name}")
+        self.item_count.setText(f"{len(entries)} files")
+        return len(entries)
+
     def _load_container(self, path: str) -> None:
         container_dir = Path(self.settings.cache_dir()) / Path(path).stem
         container_dir.mkdir(parents=True, exist_ok=True)
@@ -721,6 +761,8 @@ class MainWindow(QMainWindow):
                     count = self._load_unity(path, root)
                 elif detection.engine == "unreal":
                     count = self._load_unreal(path, root)
+                elif detection.engine == "cdpr":
+                    count = self._load_cdpr(path, root)
                 else:
                     continue
                 total += count
@@ -729,15 +771,19 @@ class MainWindow(QMainWindow):
                 self.log.appendPlainText(f"error loading {Path(path).name}: {exc}")
         self._collect_types(self._all_type_names())
         self.item_count.setText(f"{total} assets in {len(archives)} archive(s)")
+        self._detect_game_in_folder(folder)
         if not self._open_archives:
             self.preview_panel.show_hero(
                 title="Could not read archives",
                 hint="None of the found archives could be parsed. Check the log.",
             )
         else:
+            hint = f"{total} assets in {Path(folder).name}"
+            if self.current_executable:
+                hint += f"\nGame executable: {Path(self.current_executable).name}\nTools are ready (Ghidra Key Hunt, Generate USMAP)."
             self.preview_panel.show_hero(
                 title=f"Loaded {len(self._open_archives)} archive(s)",
-                hint=f"{total} assets in {Path(folder).name}",
+                hint=hint,
                 pixmap=self._hero_pixmap(),
             )
         self._apply_filter()
@@ -773,6 +819,41 @@ class MainWindow(QMainWindow):
                     if not data.get("folder") and data.get("kind"):
                         names.add(data["kind"])
         return names
+
+    def _detect_game_in_folder(self, folder: Optional[str]) -> None:
+        from dualforge.ui.executable import find_game_executable, identify_game
+
+        exe = find_game_executable(folder) if folder else None
+        self.current_executable = exe
+        driver = None
+        if exe:
+            driver = identify_game(exe, folder)
+            self.log.appendPlainText(f"detected executable: {exe}")
+        if driver is None and folder:
+            from dualforge.drivers import registry as _driver_registry
+
+            try:
+                driver = _driver_registry.match(folder, engine=self.current_engine)
+            except Exception:
+                driver = None
+        if driver is not None:
+            self._set_driver(driver)
+            self.log.appendPlainText(f"matched game driver: {driver.name}")
+            profile = self._profile_for_driver(driver)
+            if profile and profile.get("aes_key"):
+                self.settings.default_aes_key = profile["aes_key"]
+                self.settings.save()
+                self.log.appendPlainText(f"applied AES key from profile: {driver.name}")
+        elif driver is None and exe:
+            self._set_driver(None)
+
+    def _profile_for_driver(self, driver) -> Optional[dict]:
+        for profile in self.settings.profiles:
+            name = (profile.get("name") or "").lower()
+            folder = (profile.get("folder") or "").lower()
+            if name == driver.name or (folder and driver.name in folder):
+                return profile
+        return None
 
     # ---- filtering ----
 
@@ -844,6 +925,19 @@ class MainWindow(QMainWindow):
                     meta={"Engine": "Unreal", "Source": Path(archive).name},
                 )
             )
+        elif engine == "cdpr":
+            self.preview_panel.request_preview(
+                PreviewItem(
+                    title=path,
+                    engine="cdpr",
+                    kind="file",
+                    size=data.get("size") or 0,
+                    entry=path,
+                    archive_path=archive,
+                    native_archive=self._cdpr_archives.get(archive),
+                    meta={"Engine": "REDengine", "Hash": data.get("hash", ""), "Source": Path(archive).name},
+                )
+            )
         elif engine == "file" or engine == "container":
             written = data.get("path", "")
             self.preview_panel.request_preview(
@@ -885,6 +979,13 @@ class MainWindow(QMainWindow):
             rows += [
                 ("Type", "file"),
                 ("Engine", "Unreal"),
+                ("Source", Path(archive).name),
+            ]
+        elif engine == "cdpr":
+            rows += [
+                ("Type", "file"),
+                ("Engine", "REDengine"),
+                ("Hash", data.get("hash", "")),
                 ("Source", Path(archive).name),
             ]
         self.properties_table.setRowCount(len(rows))
@@ -1212,12 +1313,15 @@ class MainWindow(QMainWindow):
     def open_ghidra_hunt(self) -> None:
         from dualforge.ui.ghidra_dialog import GhidraDialog
 
-        GhidraDialog(self).exec()
+        binary = self.current_executable or ""
+        if binary and not Path(binary).is_file():
+            binary = ""
+        GhidraDialog(self, default_binary=binary).exec()
 
     def open_usmap_dump(self) -> None:
         from dualforge.ui.usmap_dialog import UsmapDumpDialog
 
-        UsmapDumpDialog(self).exec()
+        UsmapDumpDialog(self, suggested_exe=self.current_executable).exec()
 
     def open_drivers(self) -> None:
         from dualforge.ui.drivers_dialog import DriversDialog
@@ -1324,6 +1428,8 @@ class MainWindow(QMainWindow):
                     count = self._load_unity(path, root)
                 elif detection.engine == "unreal":
                     count = self._load_unreal(path, root)
+                elif detection.engine == "cdpr":
+                    count = self._load_cdpr(path, root)
                 else:
                     self.log.appendPlainText(
                         f"skipping non-extractable archive: {Path(path).name}"
@@ -1335,15 +1441,19 @@ class MainWindow(QMainWindow):
                 self.log.appendPlainText(f"error loading {Path(path).name}: {exc}")
         self._collect_types(self._all_type_names())
         self.item_count.setText(f"{total} assets in {len(archives)} archive(s)")
+        self._detect_game_in_folder(folder)
         if not self._open_archives:
             self.preview_panel.show_hero(
                 title="Could not read archives",
                 hint="None of the dropped archives could be parsed. Check the log.",
             )
         else:
+            hint = f"{total} assets in {Path(folder).name}"
+            if self.current_executable:
+                hint += f"\nGame executable: {Path(self.current_executable).name}\nTools are ready (Ghidra Key Hunt, Generate USMAP)."
             self.preview_panel.show_hero(
                 title=f"Loaded {len(self._open_archives)} archive(s)",
-                hint=f"{total} assets in {Path(folder).name}",
+                hint=hint,
                 pixmap=self._hero_pixmap(),
             )
         self._apply_filter()

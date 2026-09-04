@@ -84,6 +84,8 @@ class PreviewWorker(QThread):
                 payload = self._preview_unity()
             elif self.item.engine == "file":
                 payload = self._preview_file()
+            elif self.item.engine == "cdpr":
+                payload = self._preview_cdpr()
             else:
                 payload = self._preview_unreal()
         except Exception as exc:
@@ -288,6 +290,56 @@ class PreviewWorker(QThread):
                         raise ValueError("no file was extracted for preview")
                     cached = candidate.read_bytes()
                     helpers.write_cached(self.cache_dir, key, filename, cached)
+        payload["raw"] = cached
+        image = helpers.sniff_image(cached)
+        if image is not None:
+            payload["image"] = image
+            payload["meta"].update(
+                {
+                    "Width": str(image.width()),
+                    "Height": str(image.height()),
+                    "Decoded": "image",
+                }
+            )
+            return payload
+        audio = helpers.sniff_audio(cached, filename, self.cache_dir, key)
+        if audio is not None:
+            payload["audio_path"] = audio["audio_path"]
+            payload["peaks"] = audio["peaks"]
+            payload["duration"] = audio["duration"]
+            payload["sample_rate"] = audio["sample_rate"]
+            payload["channels"] = audio["channels"]
+            payload["meta"].update(
+                {
+                    "Decoded": "audio",
+                    "Format": Path(filename).suffix.lstrip(".").upper() or "BIN",
+                }
+            )
+            return payload
+        if helpers.guess_text(cached):
+            payload["text"] = _pretty_text(cached)
+            payload["meta"]["Decoded"] = "yes (utf-8)"
+        else:
+            payload["meta"]["Decoded"] = "no"
+        return payload
+
+    def _preview_cdpr(self) -> dict:
+        payload = self._base_payload()
+        payload["kind"] = "file"
+        archive = self.item.native_archive
+        entry_name = self.item.entry or self.item.title
+        if archive is None:
+            raise ValueError("no REDengine archive loaded for preview")
+        key = helpers.cache_key(str(entry_name), self.item.size)
+        filename = Path(entry_name).name or "file.bin"
+        cached = helpers.read_cached(self.cache_dir, key, filename)
+        if cached is None:
+            try:
+                raw = archive.open_file(entry_name)
+            except Exception as exc:
+                raise ValueError(f"REDengine read failed: {exc}") from exc
+            helpers.write_cached(self.cache_dir, key, filename, raw)
+            cached = raw
         payload["raw"] = cached
         image = helpers.sniff_image(cached)
         if image is not None:

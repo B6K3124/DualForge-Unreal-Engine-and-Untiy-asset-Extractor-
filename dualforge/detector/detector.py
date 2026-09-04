@@ -9,6 +9,10 @@ from dualforge.compression import sniff
 
 PAK_MAGIC = 0x5A6F12E1
 UTOC_MAGIC = b"-==--==--==--==-"
+BSA_MAGIC = b"BSA\x00"
+BA2_MAGIC = b"BTD\x00"
+RDAR_MAGIC = b"RDAR"
+BSA_VERSION_BY_INT = {0x67: 103, 0x68: 104, 0x69: 105}
 UNITY_SIGNATURES = (b"UnityFS", b"UnityWeb", b"UnityRaw")
 UNITY_SERIALIZED_VERSION_MIN = 13
 UNITY_SERIALIZED_VERSION_MAX = 25
@@ -54,6 +58,12 @@ def detect_header(header: bytes, filename: str, path: str = "") -> Optional[Dete
         )
     if header.startswith(UTOC_MAGIC):
         return Detection(engine="unreal", kind="iostore-toc", path=path)
+    if header.startswith(BSA_MAGIC):
+        return _detect_bsa(header, path)
+    if header.startswith(BA2_MAGIC):
+        return _detect_ba2(header, path)
+    if header.startswith(RDAR_MAGIC):
+        return _detect_rdar(header, path)
     lower = filename.lower()
     if lower.endswith(".ucas"):
         return Detection(engine="unreal", kind="iostore-payload", path=path)
@@ -74,6 +84,32 @@ def detect_header(header: bytes, filename: str, path: str = "") -> Optional[Dete
     if compressed:
         return Detection(engine="container", kind=compressed, path=path)
     return None
+
+
+def _detect_bsa(header: bytes, path: str) -> Detection:
+    details = {}
+    if len(header) >= 8:
+        version_int = struct.unpack_from("<I", header, 4)[0]
+        version = BSA_VERSION_BY_INT.get(version_int)
+        details["bsa_version"] = version if version is not None else version_int
+    return Detection(engine="bethesda", kind="bsa", path=path, details=details)
+
+
+def _detect_ba2(header: bytes, path: str) -> Detection:
+    details = {}
+    if len(header) >= 12:
+        version = struct.unpack_from("<I", header, 4)[0]
+        type_ = header[8:12].decode("ascii", "replace").strip("\x00")
+        details["ba2_version"] = version
+        details["ba2_type"] = type_ or "GNRL"
+    return Detection(engine="bethesda", kind="ba2", path=path, details=details)
+
+
+def _detect_rdar(header: bytes, path: str) -> Detection:
+    details: Dict[str, object] = {}
+    if len(header) >= 8:
+        details["rdar_version"] = struct.unpack_from("<I", header, 4)[0]
+    return Detection(engine="cdpr", kind="rdar", path=path, details=details)
 
 
 def _is_unity_serialized_header(header: bytes) -> bool:
@@ -145,4 +181,4 @@ def _read_header(path: str, size: int = 32) -> Optional[bytes]:
         return None
 
 
-__all__ = ["Detection", "detect", "detect_header", "PAK_MAGIC", "UTOC_MAGIC"]
+__all__ = ["Detection", "detect", "detect_header", "PAK_MAGIC", "UTOC_MAGIC", "BSA_MAGIC", "BA2_MAGIC"]

@@ -33,7 +33,12 @@ class Vgmstream:
         out.parent.mkdir(parents=True, exist_ok=True)
         args = [self.exe_path, "-o", str(out), "-l", "0.0", str(input_path)]
         try:
-            completed = subprocess.run(args, capture_output=True, text=True, timeout=600)
+            flags = 0
+            if os.name == "nt":
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            completed = subprocess.run(
+                args, capture_output=True, text=True, timeout=600, creationflags=flags
+            )
         except FileNotFoundError as exc:
             raise VgmstreamError(f"could not run vgmstream: {exc}") from exc
         except subprocess.TimeoutExpired as exc:

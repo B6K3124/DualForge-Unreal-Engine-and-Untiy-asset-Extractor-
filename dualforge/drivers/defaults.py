@@ -142,6 +142,90 @@ BUILTIN_DRIVERS = [
         author="DualForge",
     ),
     GameDriver(
+        name="ab-infinite",
+        label="A Bit Infinite",
+        engine="unreal",
+        game_fragments=[
+            "ABInfinite",
+            "A Bit Infinite",
+            "Dragon Ice",
+        ],
+        archive_patterns=["pakchunk*-Windows.pak"],
+        encryption_scheme="aes-256",
+        notes=(
+            "Tencent ACE-LITE protected (proprietary). Pak has a standard "
+            "header magic but a custom/obfuscated footer and page-skipping "
+            "encryption; no standard 'paK' magic or AES-encrypted index marker "
+            "exists, so DualForge cannot validate or decrypt these paks. "
+            "Keys found via this pipeline will not decrypt this format; "
+            "extraction/validation is expected to fail."
+        ),
+        tags=["mmo", "tencent"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="skyrim",
+        label="The Elder Scrolls V: Skyrim",
+        engine="bethesda",
+        game_fragments=["skyrim"],
+        archive_patterns=["Skyrim - *.bsa"],
+        notes=(
+            "BSA v104 (Skyrim 2011, zlib) and v105 (Special Edition / VR, LZ4). "
+            "Reads every archive entry; no plugin (.esm/.esp) parsing."
+        ),
+        tags=["bethesda", "rpg"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="fallout",
+        label="Fallout (3/NV/4/76)",
+        engine="bethesda",
+        game_fragments=["fallout"],
+        archive_patterns=["*.bsa", "*.ba2"],
+        notes=(
+            "BSA v103/v104 (FO3/FNV, zlib) and BA2 GNRL/DX10 (FO4/76). "
+            "Reads every archive entry; no plugin parsing."
+        ),
+        tags=["bethesda", "rpg"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="starfield",
+        label="Starfield",
+        engine="bethesda",
+        game_fragments=["starfield"],
+        archive_patterns=["*.ba2"],
+        notes="BA2 archives (GNRL/DX10). Reads every archive entry; no plugin parsing.",
+        tags=["bethesda", "rpg"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="oblivion",
+        label="The Elder Scrolls IV: Oblivion",
+        engine="bethesda",
+        game_fragments=["oblivion"],
+        archive_patterns=["*.bsa"],
+        notes=(
+            "BSA v103 (zlib). Reads every archive entry; no plugin parsing. "
+            "Large classic modding community (Oblivion Mods)."
+        ),
+        tags=["bethesda", "rpg"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="fallout-new-vegas",
+        label="Fallout: New Vegas",
+        engine="bethesda",
+        game_fragments=["new vegas", "NewVegas"],
+        archive_patterns=["*.bsa"],
+        notes=(
+            "BSA v103/v104 (zlib). Reads every archive entry; no plugin parsing. "
+            "One of the biggest modding communities in Bethesda titles."
+        ),
+        tags=["bethesda", "rpg"],
+        author="DualForge",
+    ),
+    GameDriver(
         name="valorant",
         label="VALORANT",
         engine="unreal",
@@ -169,6 +253,197 @@ BUILTIN_DRIVERS = [
         },
         notes="Default driver for Unity-based games.",
         tags=["unity", "generic"],
+        author="DualForge",
+    ),
+    # ── popular moddable games (big mod communities) ─────────────────
+    GameDriver(
+        name="valheim",
+        label="Valheim",
+        engine="unity",
+        game_fragments=["valheim"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Massive modding community (BepInEx/Jotunn).",
+        tags=["unity", "survival", "iron-gate"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="subnautica",
+        label="Subnautica",
+        engine="unity",
+        game_fragments=["subnautica"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Large modding community (Nautilus/QModManager).",
+        tags=["unity", "survival", "unknown-worlds"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="grounded",
+        label="Grounded",
+        engine="unity",
+        game_fragments=["grounded"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Active modding community (Obsidian, Unity).",
+        tags=["unity", "survival", "obsidian"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="cities-skylines",
+        label="Cities: Skylines",
+        engine="unity",
+        game_fragments=["cities skylines", "cities-skylines"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Huge asset/mod community (Steam Workshop).",
+        tags=["unity", "simulation", "colossal-order"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="kerbal-space-program",
+        label="Kerbal Space Program",
+        engine="unity",
+        game_fragments=["kerbal"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Legendary modding community (CKAN).",
+        tags=["unity", "simulation", "squad"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="sons-of-the-forest",
+        label="Sons of the Forest",
+        engine="unity",
+        game_fragments=["sons of the forest"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Active modding community (Endnight, Unity).",
+        tags=["unity", "survival", "endnight"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="seven-days-to-die",
+        label="7 Days to Die",
+        engine="unity",
+        game_fragments=["7 days to die", "7daystodie"],
+        archive_patterns=["*.assets", "*.bundle"],
+        unity_cn=False,
+        export_formats={
+            "Texture2D": "png",
+            "Sprite": "png",
+            "AudioClip": "wav",
+            "Mesh": "obj",
+            "TextAsset": "txt",
+        },
+        notes="Large modding community (NexusMods, Unity).",
+        tags=["unity", "survival", "the-fun-pimps"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="lethal-company",
+        label="Lethal Company",
+        engine="unreal",
+        game_fragments=["lethal company", "LethalCompany"],
+        archive_patterns=["pakchunk*-Windows.pak"],
+        encryption_scheme="aes-256",
+        egame="GAME_LethalCompany",
+        notes="Explosive modding community (BepInEx/Thunderstore).",
+        tags=["unreal", "co-op", "zeekerss"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="deep-rock-galactic",
+        label="Deep Rock Galactic",
+        engine="unreal",
+        game_fragments=["deep rock galactic", "deeprockgalactic"],
+        archive_patterns=["pakchunk*-Windows.pak"],
+        encryption_scheme="aes-256",
+        egame="GAME_DeepRockGalactic",
+        notes="Strong modding community (Mod.io/Rockpox).",
+        tags=["unreal", "co-op", "ghost-ship"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="satisfactory",
+        label="Satisfactory",
+        engine="unreal",
+        game_fragments=["satisfactory"],
+        archive_patterns=["pakchunk*-Windows.pak"],
+        encryption_scheme="aes-256",
+        egame="GAME_Satisfactory",
+        notes="Active modding community (SML, Unreal).",
+        tags=["unreal", "simulation", "coffee-stain"],
+        author="DualForge",
+    ),
+    # ── hugely popular modding communities (unsupported formats) ─────
+    GameDriver(
+        name="cyberpunk-2077",
+        label="Cyberpunk 2077",
+        engine="cdpr",
+        game_fragments=["cyberpunk"],
+        archive_patterns=["*.archive"],
+        notes=(
+            "REDengine 4 archives (.archive) with Kraken-compressed segments. "
+            "File names are FNV-1a hashes; depot paths require an external hash "
+            "database for recovery."
+        ),
+        tags=["rpg", "cd-projekt-red"],
+        author="DualForge",
+    ),
+    GameDriver(
+        name="baldurs-gate-3",
+        label="Baldur's Gate 3",
+        engine="auto",
+        game_fragments=["baldurs gate 3", "baldursgate3", "BaldursGate3"],
+        notes=(
+            "Larian's custom KPAK package format (.pak) is not a standard "
+            "Unreal pak; DualForge cannot read or extract these. Driver exists "
+            "to recognize the game and avoid mis-routing."
+        ),
+        tags=["rpg", "larian"],
         author="DualForge",
     ),
     GameDriver(

@@ -178,6 +178,8 @@ AES S-box signatures and high-entropy 32-byte hex keys:
 
 **From the GUI (recommended):** **Tools ▸ Ghidra Key Hunt...**
 
+**Scan one binary:**
+
 1. Click **Browse...** and pick the game `.exe` / `.dll`.
 2. (Optional) tweak the entropy threshold and how many candidate keys to store.
 3. Click **Check Setup** first — it verifies Ghidra, Java, and the bridge.
@@ -185,11 +187,33 @@ AES S-box signatures and high-entropy 32-byte hex keys:
 5. The best candidates are added to the key store automatically as
    `"<game> [ghidra-N]"` and are tried automatically the next time you open the pak.
 
+**Scan ALL binaries in the install folder (recommended):**
+
+1. Tick **"Scan ALL detected binaries in the install folder"**.
+2. **Browse...** now picks a folder instead of a file — choose the game's install
+   directory.
+3. **Check Setup**, then **Start Key Hunt**. DualForge auto-detects every game
+   executable under that folder (scoring heuristics skip launchers/helpers) and
+   hunts each one in turn; the log shows per-binary progress.
+4. Candidate keys from **all** binaries are collected, deduplicated, and written
+   to the key store as `"<binary> [ghidra-N]"`, so the correct `.exe` never has
+   to be located manually. Note this takes a few minutes per binary.
+
 **From the command line:**
 
 ```powershell
 python scripts\ghidra\ghidra_key_finder.py "C:\Game\Game.exe"
 python scripts\ghidra\ghidra_key_finder.py --check   # diagnostics
+```
+
+**End-to-end auto-crack (CLI only):** `crack run` wires the whole pipeline
+together — auto-detect the game exe, provision Ghidra/JRE (downloads on demand),
+hunt, validate candidates against a real pak, and save only the verified keys:
+
+```powershell
+python main.py crack run "C:\Game"                  # scan the top-scored executable
+python main.py crack run "C:\Game" --all-binaries   # scan every detected executable
+python main.py crack status                         # toolchain readiness
 ```
 
 **Prerequisites:** Ghidra 11.x (set `GHIDRA_HOME` or add it to `PATH`) and **Java 21**.

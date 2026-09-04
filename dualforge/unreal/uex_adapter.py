@@ -261,11 +261,15 @@ class UexAdapter:
 
     def _run(self, args: List[str], timeout: int = 600) -> Tuple[str, str, int]:
         try:
+            flags = 0
+            if os.name == "nt":
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             completed = subprocess.run(
                 [self.cli_path] + args,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                creationflags=flags,
             )
         except FileNotFoundError as exc:
             raise UnrealError(f"could not run uex: {exc}") from exc

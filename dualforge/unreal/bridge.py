@@ -87,11 +87,15 @@ class UnrealBridge:
 
     def _run(self, args: List[str]) -> str:
         try:
+            flags = 0
+            if os.name == "nt":
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             completed = subprocess.run(
                 self._cmd(args),
                 capture_output=True,
                 text=True,
                 timeout=600,
+                creationflags=flags,
             )
         except FileNotFoundError as exc:
             raise UnrealError(f"could not run CUE4ParseCLI: {exc}") from exc

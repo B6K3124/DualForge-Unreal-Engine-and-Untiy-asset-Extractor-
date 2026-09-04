@@ -54,12 +54,13 @@ class UsmapDumpWorker(QThread):
 class UsmapDumpDialog(QDialog):
     """Tools > Generate USMAP: dump names from a running UE5 game process."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, suggested_exe: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("Generate USMAP from Running Game")
         self.resize(680, 460)
         self._worker: Optional[UsmapDumpWorker] = None
         self._processes: List[Tuple[int, str]] = []
+        self._suggested_exe = suggested_exe
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
@@ -120,7 +121,14 @@ class UsmapDumpDialog(QDialog):
         for pid, exe in self._processes:
             self.process_combo.addItem(f"{exe}  (pid {pid})", pid)
         if self._processes:
-            self.process_combo.setCurrentIndex(0)
+            match_index = -1
+            if self._suggested_exe:
+                wanted = Path(self._suggested_exe).name.lower()
+                for index, (pid, exe) in enumerate(self._processes):
+                    if exe.lower() == wanted:
+                        match_index = index
+                        break
+            self.process_combo.setCurrentIndex(match_index if match_index >= 0 else 0)
             self._suggest_output()
         self.process_combo.currentIndexChanged.connect(self._on_process_changed)
 

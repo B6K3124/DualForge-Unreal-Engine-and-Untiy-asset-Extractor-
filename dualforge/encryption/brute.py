@@ -67,12 +67,33 @@ def brute_force_aes(block: bytes, candidates: list, archive_name: str = "", guid
     return None
 
 
+def _blocks_with_tail_marker(region: bytes, count: int) -> list:
+    """Gather aligned 16-byte blocks whose tail equals the AES-encrypted magic.
+
+    Encrypted Unreal index blocks carry the magic ``0x5E865DF5`` (bytes
+    ``F5 5D 86 5E``) at offset 12 whether or not the pak footer is standard.
+    """
+    blocks: list = []
+    for off in range(0, len(region) - 16, 16):
+        blk = region[off : off + 16]
+        if blk[12:16] == b"\xF5\x5D\x86\x5E":
+            blocks.append(blk)
+            if len(blocks) >= count:
+                return blocks
+    return blocks
+
+
 def probe_pak_blocks(raw: bytes, count: int = 16) -> list:
     """Extract up to ``count`` 16-byte-aligned encrypted index candidate blocks.
 
     Walks backward from the pak footer magic, collecting aligned blocks whose
     last 4 bytes look like an AES-encrypted Unreal magic marker. These are the
     blocks ``validate_key`` checks to confirm a key/scheme.
+
+    For archives whose footer is obfuscated/custom (no ``paK`` magic - e.g.
+    Tencent/NetEase engines), it falls back to scanning the whole tail region
+    for the encrypted-magic marker, so a key found via static/runtime analysis
+    can still be validated.
     """
     paK_magic = 0x5A6F12E1
     size = len(raw)
@@ -86,15 +107,17 @@ def probe_pak_blocks(raw: bytes, count: int = 16) -> list:
         # index area starts just before the footer; scan the 64KB before it
         start = max(0, end - 0x10000)
         region = raw[start:end]
-        for off in range(0, len(region) - 16, 16):
-            blk = region[off : off + 16]
-            # AES after a hit yields the magic at the block tail; encrypted
-            # Unreal blocks often carry the marker at offset 12.
-            if blk[12:16] in (b"\xF5\x5D\x86\x5E",):
-                blocks.append(blk)
-                if len(blocks) >= count:
-                    return blocks
+        blocks = _blocks_with_tail_marker(region, count)
         if len(blocks) >= count:
             return blocks
         pos = end - 1
-    return blocks
+    if blocks:
+        return blocks
+
+    # Fallback: no standard footer magic found. Scan the tail (up to a few MB)
+    # for 16-byte-aligned blocks carrying the encrypted-magic tail marker.
+    TAIL_WINDOW = 8 * 1024 * 1024
+    start = max(0, size - TAIL_WINDOW)
+    tail = raw[start:]
+    blocks = _blocks_with_tail_marker(tail, count)
+    return blocks[:count]

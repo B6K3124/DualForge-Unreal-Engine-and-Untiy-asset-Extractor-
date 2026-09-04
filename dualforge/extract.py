@@ -73,6 +73,10 @@ def extract_file(path: str, options: ExtractOptions) -> ExtractResult:
         _extract_unity(path, detection, options, result)
     elif detection.engine == "unreal":
         _extract_unreal(path, detection, options, result)
+    elif detection.engine == "bethesda":
+        _extract_bethesda(path, detection, options, result)
+    elif detection.engine == "cdpr":
+        _extract_cdpr(path, detection, options, result)
     elif detection.engine == "container":
         _extract_container(path, detection, options, result)
     else:
@@ -246,6 +250,50 @@ def _extract_unreal_bridge(path: str, options: ExtractOptions, result: ExtractRe
             return
         result.extracted.extend(str(entry.get("path", "")) for entry in entries)
         result.skipped = max(0, len(entries) - count)
+
+
+def _extract_bethesda(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
+    from dualforge.bethesda import BethesdaArchive, BethesdaError
+
+    try:
+        archive = BethesdaArchive(path)
+    except BethesdaError as exc:
+        result.errors.append(str(exc))
+        return
+    entries = list(archive.list_files())
+    if options.files:
+        wanted = {f.replace("\\", "/").lstrip("/") for f in options.files}
+        entries = [e for e in entries if e in wanted]
+    total = len(entries)
+    for index, entry in enumerate(entries):
+        _report(options, index, total, entry)
+        try:
+            written = archive.extract_file(entry, options.out_dir)
+            result.extracted.append(written)
+        except Exception as exc:
+            result.errors.append(f"{entry}: {exc}")
+
+
+def _extract_cdpr(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
+    from dualforge.cdpr import RedArchive, RedError
+
+    try:
+        archive = RedArchive(path)
+    except RedError as exc:
+        result.errors.append(str(exc))
+        return
+    entries = list(archive.list_files())
+    if options.files:
+        wanted = {f.replace("\\", "/").lstrip("/") for f in options.files}
+        entries = [e for e in entries if e in wanted]
+    total = len(entries)
+    for index, entry in enumerate(entries):
+        _report(options, index, total, entry)
+        try:
+            written = archive.extract_file(entry, options.out_dir)
+            result.extracted.append(written)
+        except Exception as exc:
+            result.errors.append(f"{entry}: {exc}")
 
 
 def _extract_container(path: str, detection: Detection, options: ExtractOptions, result: ExtractResult) -> None:
