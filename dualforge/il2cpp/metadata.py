@@ -81,8 +81,8 @@ class MetadataError(Exception):
     pass
 
 
-# Each ``StringLiteral`` is 8 bytes: a u32 ``dataIndex`` into the string
-# blob plus a u32 byte ``length``.
+# Each ``StringLiteral`` is 8 bytes: a u32 byte ``length`` followed by a u32
+# ``dataIndex`` (offset into the string blob).
 _LITERAL_ENTRY = 8
 
 
