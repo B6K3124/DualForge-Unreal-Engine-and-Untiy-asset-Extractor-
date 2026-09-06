@@ -125,6 +125,56 @@ class UnityArchive:
         except (AttributeError, TypeError, ValueError) as exc:
             raise UnityError(f"could not set decrypt key: {exc}") from exc
 
+    def world_meshes(self) -> Iterator[Dict[str, object]]:
+        """Yield crude mesh data for every readable Mesh in the archive.
+
+        Each item carries ``name`` / ``vertices`` / ``triangles`` / ``uvs``
+        (suitable for the dependency-free USD writer). Unreadable or empty
+        meshes are skipped so a partially-damaged archive still exports.
+        """
+        from UnityPy.helpers import MeshHelper
+
+        for asset in self.assets():
+            if asset.type_name != "Mesh":
+                continue
+            try:
+                obj = asset._reader.read()
+                handler = MeshHelper.MeshHandler(obj)
+                handler.process()
+                vertices = handler.m_Vertices
+                triangles = handler.get_triangles()
+                if not vertices or not any(triangles):
+                    continue
+                yield {
+                    "name": str(getattr(obj, "m_Name", "") or asset.path),
+                    "vertices": [tuple(v) for v in vertices],
+                    "triangles": [tuple(t) for submesh in triangles for t in submesh],
+                    "uvs": [tuple(uv) for uv in (handler.m_UV0 or [])],
+                }
+            except Exception:
+                continue
+
+    def world_textures(self) -> Iterator[Dict[str, object]]:
+        """Yield PNG payloads for every readable Texture2D in the archive."""
+        from PIL import Image
+        import io
+
+        for asset in self.assets():
+            if asset.type_name != "Texture2D":
+                continue
+            try:
+                image = asset._reader.read().image
+            except Exception:
+                continue
+            if image is None:
+                continue
+            buffer = io.BytesIO()
+            try:
+                image.save(buffer, format="PNG")
+            except Exception:
+                continue
+            yield {"name": str(Path(asset.path).name), "pixels": buffer.getvalue()}
+
     def assets(self) -> Iterator[UnityAsset]:
         """Iterate all readable objects.
 
@@ -161,7 +211,14 @@ class UnityArchive:
         fmt: Optional[str] = None,
         formats: Optional[Dict[str, str]] = None,
     ) -> List[str]:
-        from dualforge.export.convert import DEFAULT_FORMATS, save_text, save_texture
+        from dualforge.export.convert import (
+            DEFAULT_FORMATS,
+            save_font,
+            save_json,
+            save_shader,
+            save_text,
+            save_texture,
+        )
 
         written: List[str] = []
         obj = asset._reader.read()
@@ -181,18 +238,30 @@ class UnityArchive:
         elif type_name == "AudioClip":
             written.append(_export_audio(obj, out_dir, asset.path, chosen))
         elif type_name == "Mesh":
-            written.append(_export_mesh(obj, out_dir, asset.path, chosen))
+            written.append(_export_mesh(obj, out_dir, asset.path, chosen, scope=self.env, mesh_reader=asset._reader))
+        elif type_name == "AnimationClip":
+            written.append(_export_animation(obj, out_dir, asset.path, chosen))
         elif type_name == "TextAsset":
             data = obj.m_Script
             if isinstance(data, str):
                 data = data.encode("utf-8")
             written.append(save_text(data, stem, "txt"))
-        elif type_name in {"MonoBehaviour", "Shader", "Material"}:
-            try:
-                data = obj.raw_data
-            except AttributeError:
-                data = asset._reader.get_raw_data()
-            written.append(_write_bytes(stem.with_suffix(".bin"), data))
+        elif type_name == "Font":
+            written.append(save_font(asset, stem, chosen))
+        elif type_name == "Shader":
+            written.append(save_shader(asset, stem, chosen))
+        elif type_name in {"MonoBehaviour", "Material"}:
+            from dualforge.export.unity_assets import typetree_dict
+
+            tree = typetree_dict(asset)
+            if tree is not None:
+                written.append(save_json(tree, stem, "json"))
+            else:
+                try:
+                    data = obj.raw_data
+                except AttributeError:
+                    data = asset._reader.get_raw_data()
+                written.append(_write_bytes(stem.with_suffix(".bin"), data))
         else:
             data = asset._reader.get_raw_data()
             written.append(_write_bytes(stem.with_suffix(".bin"), data))
@@ -217,7 +286,7 @@ def _mesh_to_obj(name: str, verts, tris, uvs) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def _export_mesh(obj, out_dir: str, asset_path: str, fmt: str) -> str:
+def _export_mesh(obj, out_dir: str, asset_path: str, fmt: str, scope=None, mesh_reader=None) -> str:
     from dualforge.export.convert import save_mesh
     from UnityPy.helpers import MeshHelper
 
@@ -229,9 +298,139 @@ def _export_mesh(obj, out_dir: str, asset_path: str, fmt: str) -> str:
     if not verts or not any(tris):
         raise UnityError(f"mesh has no decodable geometry: {asset_path}")
     uvs = handler.m_UV0 or []
-    data = _mesh_to_obj(name, verts, tris, uvs)
     stem = _output_stem(out_dir, asset_path)
+    if str(fmt).lower().lstrip(".") == "gltf":
+        try:
+            return _export_skinned_gltf(
+                obj,
+                stem,
+                name,
+                verts,
+                tris,
+                uvs,
+                scope=scope,
+                reader=mesh_reader,
+            )
+        except Exception as exc:
+            # skinning is optional; degrade to a plain glTF on any problem
+            data = _mesh_to_obj(name, verts, tris, uvs)
+            return save_mesh(name or "mesh", data, stem, "gltf")
+    data = _mesh_to_obj(name, verts, tris, uvs)
     return save_mesh(name or "mesh", data, stem, fmt)
+
+
+def _export_skinned_gltf(obj, stem, name, verts, tris, uvs, scope=None, reader=None) -> str:
+    """Export a mesh as skinned glTF (skeleton + morph targets) when possible."""
+    from dualforge.export.gltf import write_gltf, write_gltf_skinned
+    from dualforge.export.unity_skin import (
+        bind_poses,
+        blend_shapes,
+        bone_hierarchy,
+        find_skinned_mesh_renderer,
+        skin_data,
+    )
+
+    triangles = [tuple(t) for submesh in tris for t in submesh]
+    normals = getattr(obj, "m_Normals", None) or getattr(obj, "m_Normals4", None)
+
+    skin = skin_data(obj)
+    binds = bind_poses(obj)
+    if skin is None or binds is None:
+        target = stem.with_suffix(".gltf")
+        write_gltf(
+            str(target),
+            [tuple(v) for v in verts],
+            triangles,
+            normals=[tuple(float(x) for x in n) for n in normals] if normals else None,
+            uvs=[tuple(float(u) for u in uv) for uv in uvs] if uvs else None,
+            name=name or "mesh",
+        )
+        return str(target)
+
+    joints, weights = skin
+    if len(joints) != len(verts):
+        joints, weights = None, None
+
+    bone_names: list = []
+    bone_parents: list = []
+    assets_file = None
+    if reader is not None:
+        try:
+            assets_file = reader.assets_file
+        except Exception:
+            assets_file = None
+    if assets_file is not None and scope is not None:
+        try:
+            smr = find_skinned_mesh_renderer(_iter_objects(scope), reader)
+            if smr is not None:
+                bone_names, bone_parents = bone_hierarchy(smr, assets_file)
+        except UnityError:
+            raise
+        except Exception:
+            bone_names, bone_parents = [], []
+    if not bone_names:
+        bone_names = [f"Bone_{idx}" for idx in range(len(binds))]
+        bone_parents = [-1] * len(binds)
+
+    blendshapes = blend_shapes(obj, len(verts))
+
+    target = stem.with_suffix(".gltf")
+    write_gltf_skinned(
+        str(target),
+        vertices=[tuple(v) for v in verts],
+        triangles=triangles,
+        normals=[tuple(float(x) for x in n) for n in normals] if normals else None,
+        uvs=[tuple(float(u) for u in uv) for uv in uvs] if uvs else None,
+        joints=joints,
+        weights=weights,
+        bind_matrices=binds,
+        bone_names=bone_names,
+        bone_parents=bone_parents,
+        blendshapes=blendshapes or None,
+        name=name or "mesh",
+    )
+    return str(target)
+
+
+def _iter_objects(scope):
+    try:
+        yield from scope.get_objects()
+    except (AttributeError, TypeError):
+        try:
+            yield from scope.objects
+        except (AttributeError, TypeError):
+            return
+
+
+def _export_animation(obj, out_dir: str, asset_path: str, fmt: str) -> str:
+    from dualforge.export.convert import save_json
+    from dualforge.export.unity_skin import animation_tracks
+
+    stem = _output_stem(out_dir, asset_path)
+    fmt = str(fmt).lower().lstrip(".")
+    if fmt == "json":
+        summary: Dict[str, object] = {"name": getattr(obj, "m_Name", "") or asset_path}
+        tracks = animation_tracks(obj)
+        summary["tracks"] = {
+            node: {
+                target: [[time, list(values)] for time, values in keys]
+                for target, keys in node_data.items()
+            }
+            for node, node_data in tracks.items()
+        }
+        summary["sample_rate"] = getattr(obj, "m_SampleRate", 0) or 60
+        return save_json(summary, stem, "json")
+
+    from dualforge.export.gltf import write_gltf_animation
+
+    name = str(getattr(obj, "m_Name", "") or Path(asset_path).name) or "clip"
+    target = stem.with_suffix(".gltf")
+    write_gltf_animation(
+        str(target),
+        name=name,
+        tracks=animation_tracks(obj),
+    )
+    return str(target)
 
 
 def _export_audio(obj, out_dir: str, asset_path: str, fmt: str) -> str:

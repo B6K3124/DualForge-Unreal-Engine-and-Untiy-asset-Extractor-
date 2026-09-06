@@ -6,8 +6,61 @@
 
 ![engine](https://img.shields.io/badge/engine-Unity%20%2F%20Unreal-orange) ![ui](https://img.shields.io/badge/ui-PySide6-blue) ![python](https://img.shields.io/badge/python-3.10%2B-informational) ![license](https://img.shields.io/badge/license-Proprietary-critical)
 
+<!--
+TODO(b6k): add a GUI screenshot for the hero section, e.g.
+![DualForge asset browser](docs/screenshots/asset-browser.png)
+A 1200x630 crop will also double as the repo's social-preview image.
+-->
+
 > **New to DualForge?** Read the **[User Guide](docs/USER_GUIDE.md)** — install,
 > first steps, interface reference, keys, and troubleshooting, step by step.
+
+---
+
+## Quick start
+
+1. **Get the app** — download the latest Windows build from the
+   **[Releases](https://github.com/B6K3124/DualForge-Asset-Extractor/releases)**
+   page (portable folder, no installer), **or** run from source with the
+   4 commands in [Option B](#option-b--run-from-source-developers).
+2. **Run it** — double-click `DualForge.exe`. If SmartScreen warns, choose
+   *More info → Run anyway* (the build is unsigned).
+3. **Open any game asset** — drag a `*.pak`, `*.utoc`/`*.ucas`, or Unity bundle
+   (`sharedassets0.assets`, `level0`, `globalgamemanagers`) onto the window.
+   Click an asset to preview it, then **Extract All** to a folder or
+   **Export Selected** for just the checked assets.
+
+That's it — no config file to touch, no manual format selection. Encrypted packs
+need an AES key and Oodle packs need the game's own DLL; both are optional and
+handled automatically when present (see
+[Unlocking encrypted archives](#unlocking-encrypted-archives)).
+
+---
+
+## Why DualForge vs. other extractors
+
+DualForge covers **both** major engines in one app and adds a few things the
+classic tools can't do:
+
+| Capability | **DualForge** | FModel | UABEA | AssetStudio | uTinyRipper |
+|---|---|---|---|---|---|
+| Unity bundles (`.assets`, `.unity3d`) | ✅ | – | ✅ | ✅ | ✅ |
+| Unreal `.pak` (native read, no external tools) | ✅ | ✅ | – | – | – |
+| Unreal IoStore (`.utoc` / `.ucas`) | ✅ | ✅ | – | – | – |
+| Oodle decompression | ✅ | ✅ | – | – | – |
+| Multi-scheme AES + custom encryption | ✅ | AES only | – | – | – |
+| **Generate `.usmap` from a running game** | ✅ | – | – | – | – |
+| Ghidra key hunt (auto-find keys in game binaries) | ✅ | – | – | – | – |
+| Mesh / audio / texture / text previews | ✅ | partial | ✅ | ✅ | limited |
+| Skeleton + animation export (skinned glTF) | ✅ | ✅ | ✅ | limited | limited |
+| `MonoBehaviour`/material property inspector | ✅ | ✅ | ✅ | ✅ | limited |
+| **Write-back / repack edited assets** | ✅ | – | ✅ | – | – |
+| **USD world export** (aggregate scenes) | ✅ | partial | – | partial | – |
+| **IL2CPP metadata dump** (`global-metadata.dat`) | ✅ | ✅ | – | – | – |
+| Headless CLI | ✅ | ✅ | – | – | – |
+| Desktop GUI (PySide6) | ✅ | ✅ | ✅ | GUI | ✅ |
+
+*Flags reflect the tools' intended scope (FModel is Unreal-only; UABEA/AssetStudio/uTinyRipper are Unity-only) and may drift — check each project for current capability.*
 
 ---
 
@@ -21,21 +74,16 @@
 - **Unity streamed data (.resS)** — sibling `.resS`/`.resource`/`.split*` stream files next to a bundle are loaded automatically, so streamed textures, audio and mesh data decode without manual file juggling.
 - **Hierarchical asset browser** — folder tree with per-asset checkboxes, regex + type filters, "Check All / None", and multi-archive **Open Folder** mode (scan a whole game directory).
 - **Asset previews** — texture/sprite image viewer (zoom/pan), audio clip waveform with inline playback (QtMultimedia), 3D mesh viewer (OpenGL wireframe + solid), text/JSON/XML viewer, and a full hex inspector. Unreal files preview natively from the pak (images, WAV/OGG/FLAC, `.wem`-style audio via vgmstream, text, hex).
-- **Format-aware export** — per-type output formats (textures: PNG/JPG/BMP/WebP/TGA, audio: WAV/OGG/FLAC/raw, meshes: OBJ/glTF with embedded buffers) configurable in Settings or via the CLI; every run writes a `_dualforge_manifest.json`.
-- **Game profiles** — save a game folder + AES key + output folder and reopen it in one click; the bound key is shown on each profile row.
+- **Format-aware export** — per-type output formats (textures: PNG/JPG/BMP/WebP/TGA/**DDS**/**KTX**, audio: WAV/OGG/FLAC/raw, meshes: OBJ/glTF/**USD** with embedded buffers) configurable in Settings or via the CLI; every run writes a `_dualforge_manifest.json`.
+- **Skeleton + animation export** — skinned meshes export as glTF with an embedded skeleton, inverse-bind matrices and morph targets; `AnimationClip` assets export their position/rotation/scale tracks as glTF animation JSON.
+- **Property inspector** — the type-tree of MonoBehaviour/Material/SerializedObject assets renders as a searchable Property/Value tree, and `.locres` files dump to JSON/CSV.
+- **Write-back (repack)** — replace a `Texture2D` (PNG/JPG/.../DDS), `TextAsset` (any text/script) or `Font` (TTF/OTF) inside a loaded Unity bundle and save the edited archive to a new folder — from the tree's right-click **Replace with File...** or the `repack` CLI.
 - **Asset statistics** — per-type file counts and sizes in a summary dialog.
+- **Game profiles** — save a game folder + AES key + output folder and reopen it in one click; the bound key is shown on each profile row.
 - **Polished PySide6 GUI** — dark & light themes, docked workspace (assets / properties / log), live search, drag-and-drop, recent files, per-file extraction progress with cancel, configurable Donate button, and a splash screen.
-- **CLI** — headless `detect`, `extract`, `keys`, and `codecs` commands.
+- **CLI** — headless `detect`, `extract`, `world`, `il2cpp`, `repack`, `locres`, `keys`, `usmap`, `crack`, and `codecs` commands.
 
-## Support the project
-
-DualForge is free and open to use. If it saved you time (or an entire weekend), a
-coffee is hugely appreciated:
-
-[![ko-fi](https://img.shields.io/badge/Support%20me%20on-Ko--fi-ff5f5f)](https://ko-fi.com/b6000)
-
-- **Ko-fi:** <https://ko-fi.com/b6000>
-- The in-app **Donate** button (toolbar) opens the same page.
+---
 
 ## Installation
 
@@ -69,7 +117,7 @@ the [User Guide](docs/USER_GUIDE.md).
 ### Option B — run from source (developers)
 
 ```powershell
-git clone <this-repo> DualForge
+git clone https://github.com/B6K3124/DualForge-Asset-Extractor.git DualForge
 cd DualForge
 python -m venv .venv
 .\.venv\Scripts\activate
@@ -92,6 +140,8 @@ pip install -e ".[snappy]"  # snappy codec support
 | **USMap (mappings)** | Parsing unversioned UE5 packages (`.uasset`), e.g. TEKKEN 8 / Dragon Ball: Sparking! ZERO | Required for games that ship unversioned packages (same as FModel). Place the game's `.usmap` in `~/.dualforge`, the game folder, or pass `--usmap` / set `DUALFORGE_USMAP`. Raw files (`.wem`, `.ini`, ...) extract without it. |
 | **vgmstream** | Exotic audio format conversion (`.wem`, `.fsb`, ...) and FLAC export | Optional; set path in *Settings* or `DUALFORGE_VGMSTREAM` |
 | **Oodle DLL** | Oodle-compressed Unreal packs | Discovered automatically: the pak's own folder chain (`Binaries/Win64`, `Engine/Binaries/Win64`, ...), then the working directory, `~/.dualforge`, and `PATH`. Never bundled or downloaded |
+
+---
 
 ## Usage
 
@@ -175,6 +225,20 @@ python main.py keys sync
 
 # Show available codecs
 python main.py codecs
+
+# Combine every mesh from a Unity archive into a single USD world layer
+python main.py world "game_Data\sharedassets0.assets" -o out\world.usd
+
+# Dump an IL2CPP global-metadata.dat string pool (il2cppdumper -nns style)
+python main.py il2cpp inspect "Game_Data\il2cpp_data\Metadata\global-metadata.dat"
+python main.py il2cpp strings "global-metadata.dat" -o strings.txt
+
+# Write-back an edited asset into a brand-new archive
+python main.py repack texture "game_Data\sharedassets0.assets" "textures/hero_0" "hero.png" -o repacked
+python main.py repack font   "game_Data\sharedassets0.assets" "fonts/title"   "title.ttf"     -o repacked
+
+# Dump UE .locres localization to JSON/CSV
+python main.py locres dump "game\Content\Localization\Game\Game.locres" -o game.json
 ```
 
 ### Generating a mappings file (`.usmap`) for Unreal Engine games
@@ -198,6 +262,8 @@ Builds with PyInstaller (`dualforge.spec`) and lands in `dist\`. **Run `dist\Dua
 `build\dualforge\DualForge.exe` intermediate (running it yields *"Failed to load
 Python DLL"*) and prints the exact file to run. Oodle DLLs and CLI helpers are never
 bundled — drop `oo2core_*.dll` next to the exe or into `~/.dualforge` if a game needs it.
+
+---
 
 ## Architecture
 
@@ -223,7 +289,7 @@ bundled — drop `oo2core_*.dll` next to the exe or into `~/.dualforge` if a gam
 
 - **Archives**: Unreal `.pak` (native, any version) and IoStore `.utoc`/`.ucas` (via CUE4Parse CLI), Unity asset bundles (`.unity3d`, `.bundle`, `.assets`) with `.resS` sibling stream files, plus nested zip / 7z / gzip / zstd / lz4 / lzma containers.
 - **Compression**: None, zlib, gzip, bz2, lzma, LZ4, LZ4HC, Zstandard, Brotli, snappy, Oodle (Kraken/Mermaid/Leviathan), LZ4 frame, 7z.
-- **Assets**: Texture2D/Sprite → PNG/JPG/BMP/WebP/TGA, AudioClip → WAV/OGG/FLAC/raw, Mesh → OBJ/glTF (+3D preview), TextAsset, Shader/Material/MonoBehaviour → raw, plus hex for everything else. Unreal previews auto-detect images, audio, and text inside paks.
+- **Assets**: Texture2D/Sprite → PNG/JPG/BMP/WebP/TGA/DDS/KTX, AudioClip → WAV/OGG/FLAC/raw, Mesh → OBJ/glTF/USD (+3D preview, skeleton+bones), AnimationClip → glTF/JSON, TextAsset, Shader/Material/MonoBehaviour → JSON/raw, Font → TTF/OTF, plus hex for everything else. Unreal previews auto-detect images, audio, and text inside paks.
 - Full reference: [`docs/COMPRESSION.md`](docs/COMPRESSION.md), [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
 
 ## Project layout
@@ -245,6 +311,48 @@ scripts/build.ps1          Windows build script
 docs/                      User guide, design, format reference, license ledger
 tests/                     pytest suite
 ```
+
+## FAQ & known limitations
+
+**Is DualForge free?** Yes — free to download and use. Donations are optional
+via the [Ko-fi](https://ko-fi.com/b6000) button.
+
+**Does it need the game installed?** No — point it at the game files you already
+have on disk.
+
+**Is it a cheat or anti-cheat tool?** No. DualForge is strictly read-only: it
+never patches, hooks, or modifies game files, and decryption/decompression happen
+entirely in memory.
+
+**Why do encrypted archives need a key?** Modern games encrypt their packs;
+DualForge decrypts them in memory with a key *you* supply. It never ships,
+downloads, or redistributes game keys (see
+[Unlocking encrypted archives](#unlocking-encrypted-archives)).
+
+**Windows-only?** The prebuilt `.exe` is Windows-only. Running from source on
+other OSes may work, but Windows is the tested/supported platform.
+
+**Known limitations:**
+
+- IoStore (`.utoc`/`.ucas`) requires the `uex`/CUE4Parse bridge, which downloads
+  native codecs on first use (network).
+- Games with unversioned UE5 packages need a `.usmap` mappings file — DualForge
+  can generate one from a running instance of the game.
+- A few games with fully custom protection schemes remain unsupported.
+- Preview/export focuses on textures, audio, meshes, and text — not every
+  asset type has a viewer yet. Everything else can still be exported raw.
+
+---
+
+## Support the project
+
+DualForge is free and open to use. If it saved you time (or an entire weekend), a
+coffee is hugely appreciated:
+
+[![ko-fi](https://img.shields.io/badge/Support%20me%20on-Ko--fi-ff5f5f)](https://ko-fi.com/b6000)
+
+- **Ko-fi:** <https://ko-fi.com/b6000>
+- The in-app **Donate** button (toolbar) opens the same page.
 
 ## Legal & licensing
 

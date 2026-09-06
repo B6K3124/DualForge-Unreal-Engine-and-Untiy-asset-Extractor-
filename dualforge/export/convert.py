@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from dualforge.export.gltf import write_gltf
 
-TEXTURE_FORMATS = ("png", "jpg", "bmp", "webp", "tga")
+TEXTURE_FORMATS = ("png", "jpg", "bmp", "webp", "tga", "dds", "ktx")
 AUDIO_FORMATS = ("wav", "ogg", "flac", "raw")
-MESH_FORMATS = ("obj", "gltf")
+MESH_FORMATS = ("obj", "gltf", "usd", "usda")
 TEXT_FORMATS = ("txt",)
 RAW_FORMATS = ("bin",)
+OBJECT_FORMATS = ("json",)
+SHADER_FORMATS = ("shader", "txt")
+FONT_FORMATS = ("ttf", "otf", "bin")
+ANIMATION_FORMATS = ("gltf", "json")
 
 DEFAULT_FORMATS = {
     "Texture2D": "png",
@@ -17,6 +22,11 @@ DEFAULT_FORMATS = {
     "AudioClip": "wav",
     "Mesh": "obj",
     "TextAsset": "txt",
+    "MonoBehaviour": "json",
+    "Material": "json",
+    "Shader": "shader",
+    "Font": "ttf",
+    "AnimationClip": "gltf",
 }
 
 
@@ -33,6 +43,14 @@ def format_choices(type_name: str) -> Tuple[str, ...]:
         return MESH_FORMATS
     if type_name == "TextAsset":
         return TEXT_FORMATS
+    if type_name in {"MonoBehaviour", "Material"}:
+        return OBJECT_FORMATS
+    if type_name == "Shader":
+        return SHADER_FORMATS
+    if type_name == "Font":
+        return FONT_FORMATS
+    if type_name == "AnimationClip":
+        return ANIMATION_FORMATS
     return RAW_FORMATS
 
 
@@ -42,6 +60,14 @@ def save_texture(image, path_stem: Path, fmt: str) -> str:
         target = path_stem.with_suffix(".jpg")
         image.convert("RGB").save(target, quality=95)
         return str(target)
+    if fmt in {"dds", "ktx"}:
+        from dualforge.export.texture import image_to_dds, image_to_ktx
+
+        target = path_stem.with_suffix(f".{fmt}")
+        data = image_to_dds(image) if fmt == "dds" else image_to_ktx(image)
+        with open(target, "wb") as fh:
+            fh.write(data)
+        return str(target)
     target = path_stem.with_suffix(f".{fmt}")
     image.save(target)
     return str(target)
@@ -49,6 +75,18 @@ def save_texture(image, path_stem: Path, fmt: str) -> str:
 
 def save_mesh(name: str, obj_data: bytes, path_stem: Path, fmt: str) -> str:
     fmt = normalize_format(fmt)
+    if fmt in {"usd", "usda"}:
+        from dualforge.export.usd import write_usd_world
+
+        verts, tris, uvs = _parse_obj_with_uv(obj_data)
+        if not verts or not tris:
+            raise ValueError("mesh has no decodable geometry for USD export")
+        target = path_stem.with_suffix(f".{fmt}")
+        write_usd_world(
+            str(target),
+            [{"name": name or path_stem.stem, "vertices": verts, "triangles": tris, "uvs": uvs}],
+        )
+        return str(target)
     if fmt == "gltf":
         verts, tris, uvs = _parse_obj_with_uv(obj_data)
         if not verts or not tris:
@@ -68,6 +106,40 @@ def save_text(data: bytes, path_stem: Path, fmt: str = "txt") -> str:
     text = data.decode("utf-8", "replace")
     with open(target, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
+    return str(target)
+
+
+def save_json(obj, path_stem: Path, fmt: str = "json") -> str:
+    from dualforge.export.unity_assets import json_default
+
+    fmt = normalize_format(fmt)
+    target = path_stem.with_suffix(f".{fmt}")
+    text = json.dumps(obj, indent=2, default=json_default)
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    return str(target)
+
+
+def save_shader(asset, path_stem: Path, fmt: str = "shader") -> str:
+    from dualforge.export.unity_assets import shader_to_text
+
+    fmt = normalize_format(fmt)
+    target = path_stem.with_suffix(f".{fmt}")
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(shader_to_text(asset))
+    return str(target)
+
+
+def save_font(asset, path_stem: Path, fmt: str = "ttf") -> str:
+    from dualforge.export.unity_assets import font_data
+
+    fmt = normalize_format(fmt)
+    data = font_data(asset)
+    if not data:
+        raise ValueError("font has no extractable TTF/OTF data")
+    target = path_stem.with_suffix(f".{fmt}")
+    with open(target, "wb") as fh:
+        fh.write(data)
     return str(target)
 
 
@@ -128,14 +200,21 @@ def _parse_obj_with_uv(data: bytes):
 
 __all__ = [
     "AUDIO_FORMATS",
+    "ANIMATION_FORMATS",
     "DEFAULT_FORMATS",
+    "FONT_FORMATS",
     "MESH_FORMATS",
+    "OBJECT_FORMATS",
     "RAW_FORMATS",
+    "SHADER_FORMATS",
     "TEXT_FORMATS",
     "TEXTURE_FORMATS",
     "format_choices",
     "normalize_format",
+    "save_font",
+    "save_json",
     "save_mesh",
+    "save_shader",
     "save_text",
     "save_texture",
 ]

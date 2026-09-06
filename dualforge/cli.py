@@ -49,6 +49,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     extract_parser.set_defaults(handler=_cmd_extract)
 
+    world_parser = sub.add_parser(
+        "world",
+        help="combine every mesh in a Unity archive into a single USD world layer",
+    )
+    world_parser.add_argument("path", help="Unity archive (bundle, assets, level, ...)")
+    world_parser.add_argument(
+        "-o", "--out", required=True,
+        help="output .usd/.usda file (defaults to ASCII regardless of extension)",
+    )
+    world_parser.add_argument(
+        "--scene", default="World", help="root prim name (default: World)",
+    )
+    world_parser.add_argument(
+        "--up-axis", choices=("Y", "Z"), default="Y",
+        help="stage up axis in the USD metadata (default: Y)",
+    )
+    world_parser.set_defaults(handler=_cmd_world)
+
+    il2cpp_parser = sub.add_parser(
+        "il2cpp",
+        help="inspect and dump a Unity IL2CPP global-metadata.dat",
+    )
+    il2cpp_sub = il2cpp_parser.add_subparsers(dest="il2cpp_command", required=True)
+    il2cpp_inspect = il2cpp_sub.add_parser("inspect", help="print the metadata header summary")
+    il2cpp_inspect.add_argument("path", help="path to global-metadata.dat")
+    il2cpp_inspect.set_defaults(il2cpp_handler=_cmd_il2cpp_inspect)
+    il2cpp_strings = il2cpp_sub.add_parser(
+        "strings", help="dump the string-literal pool (il2cppdumper -nns style)",
+    )
+    il2cpp_strings.add_argument("path", help="path to global-metadata.dat")
+    il2cpp_strings.add_argument(
+        "-o", "--out", help="output text file; if omitted, prints to stdout",
+    )
+    il2cpp_strings.set_defaults(il2cpp_handler=_cmd_il2cpp_strings)
+
     keys_parser = sub.add_parser("keys", help="manage the decryption key database")
     keys_sub = keys_parser.add_subparsers(dest="key_command", required=True)
     keys_list = keys_sub.add_parser("list")
@@ -215,6 +250,44 @@ def build_parser() -> argparse.ArgumentParser:
         "status", help="report the Ghidra/JRE toolchain status",
     )
     crack_status.set_defaults(crack_handler=_cmd_crack_status)
+
+    locres_parser = sub.add_parser(
+        "locres", help="inspect and dump Unreal Engine .locres localization files",
+    )
+    locres_sub = locres_parser.add_subparsers(dest="locres_command")
+    locres_dump = locres_sub.add_parser("dump", help="dump a .locres file to JSON or CSV")
+    locres_dump.add_argument("path", help="path to a .locres file")
+    locres_dump.add_argument(
+        "-f", "--format", choices=("json", "csv", "text"), default="json",
+        help="output format (default: json)",
+    )
+    locres_dump.add_argument(
+        "-o", "--out", help="output file; if omitted, prints to stdout",
+    )
+    locres_dump.set_defaults(locres_handler=_cmd_locres_dump)
+
+    repack_parser = sub.add_parser(
+        "repack", help="replace an asset inside a Unity archive and save the result",
+    )
+    repack_sub = repack_parser.add_subparsers(dest="repack_command", required=True)
+    repack_tex = repack_sub.add_parser("texture", help="replace a Texture2D's pixels")
+    repack_tex.add_argument("archive", help="path to a Unity archive (bundle, assets, resS)")
+    repack_tex.add_argument("asset", help="asset path inside the archive, e.g. textures/icon_0")
+    repack_tex.add_argument("image", help="replacement image file (png/jpg/bmp/webp/tga/dds)")
+    repack_tex.add_argument("-o", "--out", required=True, help="output directory (never the source)")
+    repack_tex.set_defaults(repack_handler=_cmd_repack_texture)
+    repack_txt = repack_sub.add_parser("text", help="replace a TextAsset's payload")
+    repack_txt.add_argument("archive", help="path to a Unity archive")
+    repack_txt.add_argument("asset", help="asset path inside the archive")
+    repack_txt.add_argument("file", help="replacement text file")
+    repack_txt.add_argument("-o", "--out", required=True, help="output directory (never the source)")
+    repack_txt.set_defaults(repack_handler=_cmd_repack_text)
+    repack_font = repack_sub.add_parser("font", help="replace a Font's embedded TTF/OTF bytes")
+    repack_font.add_argument("archive", help="path to a Unity archive")
+    repack_font.add_argument("asset", help="asset path inside the archive")
+    repack_font.add_argument("font", help="replacement .ttf or .otf file")
+    repack_font.add_argument("-o", "--out", required=True, help="output directory (never the source)")
+    repack_font.set_defaults(repack_handler=_cmd_repack_font)
     return parser
 
 
@@ -273,6 +346,76 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     for error in result.errors:
         print(f"warning: {error}", file=sys.stderr)
     return 0 if not result.errors else 2
+
+
+def _cmd_world(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.export.usd import write_usd_world
+    from dualforge.unity import UnityArchive
+
+    try:
+        archive = UnityArchive(args.path)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    meshes = list(archive.world_meshes())
+    if not meshes:
+        print(f"no readable meshes in {args.path}", file=sys.stderr)
+        return 1
+    textures = list(archive.world_textures())
+    try:
+        write_usd_world(
+            args.out,
+            meshes,
+            textures=textures,
+            scene_name=args.scene,
+            up_axis=args.up_axis,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    printed = len(textures)
+    print(
+        f"wrote {args.out}: {len(meshes)} mesh prims (skinned exporters ignored), "
+        f"{printed} textures placed in textures/"
+    )
+    return 0
+
+
+def _cmd_il2cpp_inspect(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.il2cpp import MAX_SUPPORTED, MIN_SUPPORTED, MetadataError, parse_metadata
+
+    try:
+        info = parse_metadata(Path(args.path).read_bytes())
+    except (OSError, MetadataError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"magic        : ok")
+    print(f"version      : {info.version}")
+    print(f"string literal : {info.string_literal_count}")
+    print(f"strings (bytes): {info.string_count}")
+    print(f"type defs(bytes): {info.type_definition_count}")
+    supported = "" if MIN_SUPPORTED <= info.version <= MAX_SUPPORTED else " (unsupported for dumps)"
+    print(f"support      : {supported or 'yes'}")
+    return 0
+
+
+def _cmd_il2cpp_strings(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.il2cpp import MetadataError, dump_strings
+
+    try:
+        count, out = dump_strings(Path(args.path).read_bytes(), args.out)
+    except (OSError, MetadataError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if out:
+        print(f"wrote {count} string literals to {out}")
+    return 0
 
 
 def _cmd_keys_list(args: argparse.Namespace) -> int:
@@ -740,6 +883,89 @@ def _cmd_crack_run(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_locres_dump(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.unreal.locres import parse_locres_file
+
+    try:
+        locres = parse_locres_file(args.path)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.format == "json":
+        content = locres.to_json()
+    elif args.format == "csv":
+        content = locres.to_csv()
+    else:
+        lines = [f"{e.qualified_key} = {e.value}" for e in locres.entries]
+        content = "\n".join(lines) + ("\n" if lines else "")
+
+    if args.out:
+        Path(args.out).write_text(content, encoding="utf-8")
+        print(f"wrote {len(locres.entries)} entries to {args.out}")
+    else:
+        print(content)
+    return 0
+
+
+def _find_unity_asset(archive: str, asset_path: str):
+    from dualforge.unity import UnityArchive
+
+    handle = UnityArchive(archive)
+    for asset in handle.assets():
+        if asset.path == asset_path:
+            return handle, asset
+    raise LookupError(f"no asset '{asset_path}' in {archive}")
+
+
+def _cmd_repack_texture(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.unity.repack import replace_texture, save_archive
+
+    try:
+        handle, asset = _find_unity_asset(args.archive, args.asset)
+        replace_texture(handle, asset, args.image)
+        save_archive(handle, args.out)
+    except (OSError, LookupError, Exception) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"replaced Texture2D '{args.asset}' -> {args.out}")
+    return 0
+
+
+def _cmd_repack_text(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.unity.repack import replace_text_asset, save_archive
+
+    try:
+        handle, asset = _find_unity_asset(args.archive, args.asset)
+        replace_text_asset(handle, asset, Path(args.file).read_bytes())
+        save_archive(handle, args.out)
+    except (OSError, LookupError, Exception) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"replaced TextAsset '{args.asset}' -> {args.out}")
+    return 0
+
+
+def _cmd_repack_font(args: argparse.Namespace) -> int:
+    from dualforge.unity.repack import replace_font, save_archive
+
+    try:
+        handle, asset = _find_unity_asset(args.archive, args.asset)
+        replace_font(handle, asset, args.font)
+        save_archive(handle, args.out)
+    except (OSError, LookupError, Exception) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"replaced Font '{args.asset}' -> {args.out}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -758,6 +984,15 @@ def main(argv=None) -> int:
     crack_handler = getattr(args, "crack_handler", None)
     if crack_handler:
         return crack_handler(args)
+    locres_handler = getattr(args, "locres_handler", None)
+    if locres_handler:
+        return locres_handler(args)
+    il2cpp_handler = getattr(args, "il2cpp_handler", None)
+    if il2cpp_handler:
+        return il2cpp_handler(args)
+    repack_handler = getattr(args, "repack_handler", None)
+    if repack_handler:
+        return repack_handler(args)
     parser.print_help()
     return 0
 

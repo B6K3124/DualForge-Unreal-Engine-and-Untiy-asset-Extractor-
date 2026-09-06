@@ -113,7 +113,11 @@ the Ko-fi page (<https://ko-fi.com/b6000>) — the URL is editable in Settings.
 
 - **Assets** (left) — search + type filter + checkbox tree. Checkboxes drive
   *Export Selected*; "Check All / None" buttons affect only visible rows.
-- **Properties** (bottom) — metadata of the selected asset (type, size, engine version…).
+- **Properties** (bottom) — a vertical splitter: the top pane shows metadata of
+  the selected asset (type, size, engine version…), the bottom pane is the
+  **Inspector** — a searchable Property/Value tree of the asset's full type tree
+  (MonoBehaviour, Material, SerializedObject, Font, …). Right-click any row to
+  copy its value.
 - **Log** (bottom) — detection results, key used, warnings.
 
 All docks can be toggled under **View** and re-docked by dragging their title bars.
@@ -129,12 +133,67 @@ Selecting an asset loads a preview automatically (in a background thread):
 | Texture2D / Sprite | Image viewer — zoom (`+`/`-`), **Fit**, **1:1**, pan with the mouse |
 | AudioClip (Unity) | Waveform + inline **Play/Stop** with a seek bar |
 | `.wav` / `.ogg` / `.flac` and exotic Unreal audio (`.wem`, `.fsb`, …) | Same audio page — exotic formats need **vgmstream** (§7) |
-| Mesh (Unity) | 3D viewer — **Wireframe** toggle, **Reset view**, drag to orbit |
+| Mesh (Unity) | 3D viewer — **Wireframe** toggle, **Reset view**, drag to orbit; skinned meshes also render the **skeleton** (bones + joints) |
+| AnimationClip (Unity) | Track summary (position/rotation/scale keyframes per node) |
 | TextAsset | Pretty-printed JSON/XML/text viewer |
 | Anything else | Hex inspector (first 256 KB shown) |
 
 Previews are cached under `~/.dualforge/preview_cache` so revisiting an asset is fast.
 Audio previews that fail to decode fall back gracefully with an error page.
+
+---
+
+## 4.1 Exporting, replacing & repacking
+
+**Export formats** are set in *File ▸ Settings* (or per-type via the `extract --format`
+CLI flag). The status bar shows the active `Texture2D:png Mesh:obj …` chips.
+
+| Asset type | Export formats |
+|---|---|
+| Texture2D / Sprite | PNG, JPG, BMP, WebP, TGA, DDS, KTX |
+| AudioClip | WAV, OGG, FLAC, raw |
+| Mesh | OBJ, glTF, USD |
+| AnimationClip | glTF, JSON |
+| Font | TTF, OTF, raw |
+
+**Skeleton & animation.** A skinned Mesh exports as glTF with its skeleton,
+inverse-bind matrices and morph targets; `AnimationClip` assets export their
+position/rotation/scale tracks as glTF animation data.
+
+**USD world export.** `Mesh` → USD produces an ASCII `.usda`/`.usd` layer (no
+external USD library needed). The `world` CLI command aggregates every readable
+mesh in an archive into one USD stage — ideal for bringing a whole scene into
+Blender/Blender-USD/Houdini/Omniverse:
+
+```powershell
+python main.py world "game_Data\sharedassets0.assets" -o out\world.usd
+```
+
+**Replacing & repacking (write-back).** You can swap the *data* of a Unity asset and
+save the edited archive to a **new** folder (DualForge never overwrites your source
+archive). Supported: `Texture2D` (PNG/JPG/BMP/WebP/TGA/DDS), `TextAsset` (any
+text/script file), and `Font` (`.ttf`/`.otf`).
+
+- **GUI:** right-click a supported asset in the tree → **Replace with File...**, pick
+  the replacement, then choose a fresh output folder. The log confirms the result.
+- **CLI:** the `repack` subcommand does the same headlessly:
+
+```powershell
+python main.py repack texture "sharedassets0.assets" "textures/hero_0" "hero.png" -o repacked
+python main.py repack font   "sharedassets0.assets" "fonts/title"     "title.ttf" -o repacked
+```
+
+**IL2CPP metadata.** If a game ships `global-metadata.dat`, the `il2cpp` CLI can
+inspect its header and dump the entire string-literal pool (il2cppdumper-`-nns`
+style) — handy for string references and obfuscation triage:
+
+```powershell
+python main.py il2cpp inspect "global-metadata.dat"      # version + section counts
+python main.py il2cpp strings "global-metadata.dat" -o strings.txt
+```
+
+**Unreal `.locres`.** `locres dump` converts UE localization files to JSON/CSV/text
+from the CLI, and `.locres` files are detected by magic bytes in the browser.
 
 ---
 
@@ -320,7 +379,7 @@ taken from — re-dump after a game update.
 | Key file (FModel) | Import `Global.AESKeys.json` |
 | Sync endpoints | Comma-separated community key URLs |
 | Donation URL | What the toolbar Donate button opens |
-| Texture / Sprite / Audio / Mesh format | Export format per asset type (PNG/JPG/WebP/TGA, WAV/OGG/FLAC, OBJ/glTF…) |
+| Texture / Sprite / Audio / Mesh format | Export format per asset type (PNG/JPG/BMP/WebP/TGA/DDS/KTX, WAV/OGG/FLAC, OBJ/glTF/USD…) |
 
 ### External tools at a glance
 
@@ -411,4 +470,19 @@ python main.py usmap dump --list-processes                 # list running proces
 python main.py usmap dump --process "Game-Win64-Shipping.exe" -o "%USERPROFILE%\.dualforge\Game.usmap"
 python main.py usmap validate "game.usmap"                 # inspect a usmap file
 python main.py usmap repack "game.usmap" -o small.usmap --compression zstd
+
+# USD world export (Unity mesh aggregate)
+python main.py world "game_Data\sharedassets0.assets" -o out\world.usd
+
+# IL2CPP metadata
+python main.py il2cpp inspect "game_Data\il2cpp_data\Metadata\global-metadata.dat"
+python main.py il2cpp strings "global-metadata.dat" -o strings.txt
+
+# Write-back / repack an edited asset into a new archive
+python main.py repack texture "sharedassets0.assets" "textures/hero_0" "hero.png" -o repacked
+python main.py repack text   "sharedassets0.assets" "assets/script"    "script.cs"  -o repacked
+python main.py repack font   "sharedassets0.assets" "fonts/title"      "title.ttf"   -o repacked
+
+# Unreal .locres localization dump
+python main.py locres dump "game\Content\Localization\Game\Game.locres" -o game.json
 ```

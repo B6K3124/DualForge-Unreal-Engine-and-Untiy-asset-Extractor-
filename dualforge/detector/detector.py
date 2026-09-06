@@ -12,6 +12,10 @@ UTOC_MAGIC = b"-==--==--==--==-"
 BSA_MAGIC = b"BSA\x00"
 BA2_MAGIC = b"BTD\x00"
 RDAR_MAGIC = b"RDAR"
+LOCRES_MAGIC = 0x324F4352
+IL2CPP_METADATA_MAGIC = 0xFAB11BAF
+DDS_MAGIC = b"DDS "
+KTX_MAGIC = b"\xAB" + b"KTX"
 BSA_VERSION_BY_INT = {0x67: 103, 0x68: 104, 0x69: 105}
 UNITY_SIGNATURES = (b"UnityFS", b"UnityWeb", b"UnityRaw")
 UNITY_SERIALIZED_VERSION_MIN = 13
@@ -64,6 +68,14 @@ def detect_header(header: bytes, filename: str, path: str = "") -> Optional[Dete
         return _detect_ba2(header, path)
     if header.startswith(RDAR_MAGIC):
         return _detect_rdar(header, path)
+    if len(header) >= 4 and struct.unpack_from("<I", header, 0)[0] == LOCRES_MAGIC:
+        return Detection(engine="unreal", kind="locres", path=path)
+    if len(header) >= 4 and struct.unpack_from("<I", header, 0)[0] == IL2CPP_METADATA_MAGIC:
+        return _detect_il2cpp_metadata(header, path)
+    if header.startswith(DDS_MAGIC):
+        return _detect_dds(header, path)
+    if header.startswith(KTX_MAGIC):
+        return Detection(engine="container", kind="ktx", path=path)
     lower = filename.lower()
     if lower.endswith(".ucas"):
         return Detection(engine="unreal", kind="iostore-payload", path=path)
@@ -110,6 +122,22 @@ def _detect_rdar(header: bytes, path: str) -> Detection:
     if len(header) >= 8:
         details["rdar_version"] = struct.unpack_from("<I", header, 4)[0]
     return Detection(engine="cdpr", kind="rdar", path=path, details=details)
+
+
+def _detect_il2cpp_metadata(header: bytes, path: str) -> Detection:
+    details: Dict[str, object] = {}
+    if len(header) >= 8:
+        details["metadata_version"] = struct.unpack_from("<i", header, 4)[0]
+    return Detection(engine="unity", kind="il2cpp-metadata", path=path, details=details)
+
+
+def _detect_dds(header: bytes, path: str) -> Detection:
+    details: Dict[str, object] = {}
+    if len(header) >= 20:
+        width, height = struct.unpack_from("<II", header, 12)
+        details["width"] = width
+        details["height"] = height
+    return Detection(engine="container", kind="dds", path=path, details=details)
 
 
 def _is_unity_serialized_header(header: bytes) -> bool:
@@ -181,4 +209,16 @@ def _read_header(path: str, size: int = 32) -> Optional[bytes]:
         return None
 
 
-__all__ = ["Detection", "detect", "detect_header", "PAK_MAGIC", "UTOC_MAGIC", "BSA_MAGIC", "BA2_MAGIC"]
+__all__ = [
+    "Detection",
+    "detect",
+    "detect_header",
+    "PAK_MAGIC",
+    "UTOC_MAGIC",
+    "BSA_MAGIC",
+    "BA2_MAGIC",
+    "DDS_MAGIC",
+    "KTX_MAGIC",
+    "LOCRES_MAGIC",
+    "IL2CPP_METADATA_MAGIC",
+]

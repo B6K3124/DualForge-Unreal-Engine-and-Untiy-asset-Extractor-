@@ -29,6 +29,10 @@ IMAGE_TYPES = {"Texture2D", "Sprite"}
 AUDIO_TYPES = {"AudioClip"}
 MESH_TYPES = {"Mesh"}
 TEXT_TYPES = {"TextAsset"}
+OBJECT_TYPES = {"MonoBehaviour", "Material"}
+SHADER_TYPES = {"Shader"}
+FONT_TYPES = {"Font"}
+ANIMATION_TYPES = {"AnimationClip"}
 
 _PAGE_HERO = 0
 _PAGE_IMAGE = 1
@@ -115,6 +119,7 @@ class PreviewWorker(QThread):
                 raise ValueError(f"could not decode this Unity {asset.type_name} object: {exc}") from exc
         type_name = obj.type.name
         payload["kind"] = type_name
+        tree = _typetree(payload, asset)
         if type_name in IMAGE_TYPES:
             image = getattr(obj, "image", None)
             if image is None:
@@ -155,6 +160,9 @@ class PreviewWorker(QThread):
                 raise ValueError("mesh has no decodable geometry")
             verts, normals, tris, edges = parsed
             payload["mesh"] = (verts, normals, tris, edges)
+            bones = _preview_bones(asset, obj)
+            if bones:
+                payload["bones"] = bones
             payload["meta"].update(
                 {
                     "Vertices": str(len(verts)),
@@ -162,16 +170,64 @@ class PreviewWorker(QThread):
                     "Object": name or asset.path,
                 }
             )
+            if bones:
+                payload["meta"]["Bones"] = str(len(bones))
+        elif type_name in ANIMATION_TYPES:
+            from dualforge.export.unity_skin import animation_tracks, clip_summary
+
+            summary = clip_summary(obj)
+            tracks = animation_tracks(obj)
+            text_lines = [f"// {summary['Position curves']} position / {summary['Rotation curves']} rotation / {summary['Scale curves']} scale curves"]
+            text_lines.append(f"// {summary['Keyframes']} keyframes @ {summary['Sample rate']} Hz")
+            for node, node_data in tracks.items():
+                text_lines.append(f"{node}: {', '.join(sorted(node_data))}")
+            payload["text"] = "\n".join(text_lines)
+            payload["meta"].update(summary)
+            payload["meta"]["Object"] = str(getattr(obj, "m_Name", "") or asset.path)
         elif type_name in TEXT_TYPES:
             data = obj.m_Script
             if isinstance(data, str):
                 data = data.encode("utf-8")
             payload["text"] = _pretty_text(data)
             payload["meta"]["Decoded"] = "yes"
-        elif type_name in {"AnimationClip", "Font"}:
+        elif type_name in OBJECT_TYPES:
+            from dualforge.export.unity_assets import monobehaviour_json
+
+            text = monobehaviour_json(asset) or _typetree_text(tree)
+            payload["text"] = text
+            payload["meta"].update(
+                {
+                    "Decoded": "yes (type tree)",
+                    "Fields": _count_fields(tree),
+                }
+            )
+        elif type_name in SHADER_TYPES:
+            from dualforge.export.unity_assets import shader_to_text
+
+            payload["text"] = shader_to_text(asset) or _typetree_text(tree)
+            payload["meta"].update(
+                {
+                    "Decoded": "yes (shader source)",
+                    "Fields": _count_fields(tree),
+                }
+            )
+        elif type_name in FONT_TYPES:
             payload["meta"].update(_extra_unity_meta(obj, type_name))
-            if type_name == "AnimationClip":
-                payload["meta"]["Decoded"] = "clip summary"
+            from dualforge.export.unity_assets import font_data
+
+            try:
+                font_bytes = font_data(asset)
+            except Exception:
+                font_bytes = None
+            if font_bytes:
+                is_ttf = font_bytes[:4] in (b"\x00\x01\x00\x00", b"OTTO", b"true")
+                payload["meta"]["Font bytes"] = f"{len(font_bytes):,}"
+                payload["meta"]["Font format"] = "TTF/OTF" if is_ttf else "embedded"
+                payload["font"] = font_bytes
+            payload["meta"]["Decoded"] = "font"
+        elif type_name in {"AnimationClip"}:
+            payload["meta"].update(_extra_unity_meta(obj, type_name))
+            payload["meta"]["Decoded"] = "clip summary"
         else:
             try:
                 raw = obj.raw_data
@@ -214,6 +270,12 @@ class PreviewWorker(QThread):
             raise ValueError(f"file not found: {path}")
         data = path.read_bytes()
         payload["raw"] = data
+        locres_result = _try_locres(path.name, data)
+        if locres_result is not None:
+            text, locres_meta = locres_result
+            payload["text"] = text
+            payload["meta"].update(locres_meta)
+            return payload
         image = helpers.sniff_image(data)
         if image is not None:
             payload["image"] = image
@@ -291,6 +353,12 @@ class PreviewWorker(QThread):
                     cached = candidate.read_bytes()
                     helpers.write_cached(self.cache_dir, key, filename, cached)
         payload["raw"] = cached
+        locres_result = _try_locres(filename, cached)
+        if locres_result is not None:
+            text, locres_meta = locres_result
+            payload["text"] = text
+            payload["meta"].update(locres_meta)
+            return payload
         image = helpers.sniff_image(cached)
         if image is not None:
             payload["image"] = image
@@ -341,6 +409,12 @@ class PreviewWorker(QThread):
             helpers.write_cached(self.cache_dir, key, filename, raw)
             cached = raw
         payload["raw"] = cached
+        locres_result = _try_locres(filename, cached)
+        if locres_result is not None:
+            text, locres_meta = locres_result
+            payload["text"] = text
+            payload["meta"].update(locres_meta)
+            return payload
         image = helpers.sniff_image(cached)
         if image is not None:
             payload["image"] = image
@@ -372,6 +446,114 @@ class PreviewWorker(QThread):
         else:
             payload["meta"]["Decoded"] = "no"
         return payload
+
+
+def _preview_bones(asset, obj):
+    """Best-effort skeleton joints for the mesh preview (or None)."""
+    try:
+        from dualforge.export.unity_skin import (
+            bind_poses,
+            bone_hierarchy,
+            find_skinned_mesh_renderer,
+            joint_positions,
+            skin_data,
+        )
+
+        if skin_data(obj) is None or bind_poses(obj) is None:
+            return None
+        assets_file = getattr(asset._reader, "assets_file", None)
+        if assets_file is None:
+            return None
+        smr = find_skinned_mesh_renderer(assets_file.get_objects(), asset._reader)
+        if smr is None:
+            return None
+        names, parents = bone_hierarchy(smr, assets_file)
+        points = joint_positions(bind_poses(obj))
+        if not names or len(names) != len(points):
+            return None
+        return [
+            {
+                "index": idx,
+                "name": names[idx],
+                "x": float(point[0]),
+                "y": float(point[1]),
+                "z": float(point[2]),
+                "parent": parents[idx],
+            }
+            for idx, point in enumerate(points)
+        ]
+    except Exception:
+        return None
+
+
+def _typetree(payload: dict, asset) -> Optional[Dict[str, object]]:
+    """Attach the full structure of a Unity object to a preview payload as
+    JSON-able data (drives the GUI property inspector / JSON exports)."""
+    from dualforge.export.unity_assets import typetree_dict
+
+    try:
+        tree = typetree_dict(asset)
+    except Exception:
+        tree = None
+    if tree is not None:
+        payload["typetree"] = tree
+    return tree
+
+
+def _typetree_text(tree: Optional[Dict[str, object]]) -> str:
+    if tree is None:
+        return "No readable type tree for this object."
+    try:
+        return json.dumps(tree, indent=2, default=str)
+    except (TypeError, ValueError):
+        return str(tree)
+
+
+def _count_fields(tree: Optional[Dict[str, object]]) -> str:
+    if not isinstance(tree, dict):
+        return "0"
+    seen = set()
+
+    def walk(value) -> None:
+        if isinstance(value, dict):
+            for key, val in value.items():
+                seen.add(key)
+                walk(val)
+        elif isinstance(value, (list, tuple)):
+            for val in value:
+                walk(val)
+
+    walk(tree)
+    return str(len(seen))
+
+
+def _try_locres(filename: str, data: bytes) -> Optional[tuple]:
+    """Parse Unreal .locres localization data into a (text, meta) tuple.
+
+    Returns None when the data does not parse as locres (fall back to the
+    normal image/audio/text sniffing path).
+    """
+    if not filename.lower().endswith(".locres"):
+        return None
+    from dualforge.unreal.locres import parse_locres
+
+    try:
+        locres = parse_locres(data)
+    except Exception:
+        return None
+    rows = []
+    for entry in locres.entries[:200]:
+        label = entry.key if not entry.namespace else f"{entry.namespace}.{entry.key}"
+        rows.append(f"{label}\n  {entry.value}")
+    text = "\n\n".join(rows) if rows else "(empty locres)"
+    if len(locres.entries) > 200:
+        text += f"\n\n... {len(locres.entries) - 200} more entries ..."
+    meta = {
+        "Decoded": "yes (locres)",
+        "Entries": str(len(locres.entries)),
+        "Version": str(locres.version or "detected"),
+    }
+    return text, meta
 
 
 def _extra_unity_meta(obj, type_name: str) -> dict:
@@ -548,12 +730,16 @@ class MeshPage(QWidget):
             self.view = None
             layout.addWidget(QLabel("OpenGL is not available on this system."), 1)
 
-    def set_mesh(self, mesh) -> None:
+    def set_mesh(self, mesh, bones=None) -> None:
         if self.view is None:
             return
         verts, normals, tris, edges = mesh
         self.view.set_mesh(verts, normals, tris, edges)
-        self.stats_label.setText(f"{len(verts):,} vertices - {len(tris):,} triangles")
+        self.view.set_bones(bones)
+        label = f"{len(verts):,} vertices - {len(tris):,} triangles"
+        if bones:
+            label += f" - {len(bones):,} bones"
+        self.stats_label.setText(label)
 
     def _on_wireframe(self, enabled: bool) -> None:
         if self.view is not None:
@@ -692,6 +878,8 @@ class HeroPage(QWidget):
 
 
 class PreviewPanel(QStackedWidget):
+    typetree_loaded = Signal(dict)
+
     def __init__(self, cache_dir: str, parent=None):
         super().__init__(parent)
         self.cache_dir = cache_dir
@@ -755,6 +943,8 @@ class PreviewPanel(QStackedWidget):
         self.overlay.hide_overlay()
         meta_rows = "\n".join(f"{k}: {v}" for k, v in payload.get("meta", {}).items())
         title = payload.get("title", "")
+        if "typetree" in payload:
+            self.typetree_loaded.emit(payload["typetree"])
         if "image" in payload and payload["image"] is not None:
             self.image_page.set_image(payload["image"])
             self.setCurrentIndex(_PAGE_IMAGE)
@@ -772,7 +962,7 @@ class PreviewPanel(QStackedWidget):
             self.meta_page.title.setText(title)
             self.meta_page.details.setText(meta_rows)
         elif "mesh" in payload:
-            self.mesh_page.set_mesh(payload["mesh"])
+            self.mesh_page.set_mesh(payload["mesh"], payload.get("bones"))
             self.setCurrentIndex(_PAGE_MESH)
             self.meta_page.title.setText(title)
             self.meta_page.details.setText(meta_rows)

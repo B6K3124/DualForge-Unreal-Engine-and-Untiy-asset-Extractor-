@@ -26,13 +26,19 @@ def test_format_choices():
     assert "tga" in format_choices("Sprite")
     assert format_choices("AudioClip") == ("wav", "ogg", "flac", "raw")
     assert "gltf" in format_choices("Mesh")
-    assert format_choices("MonoBehaviour") == ("bin",)
+    assert format_choices("MonoBehaviour") == ("json",)
+    assert "json" in format_choices("Material")
+    assert "shader" in format_choices("Shader")
+    assert "ttf" in format_choices("Font")
 
 
 def test_default_formats():
     assert DEFAULT_FORMATS["Texture2D"] == "png"
     assert DEFAULT_FORMATS["AudioClip"] == "wav"
     assert DEFAULT_FORMATS["Mesh"] == "obj"
+    assert DEFAULT_FORMATS["MonoBehaviour"] == "json"
+    assert DEFAULT_FORMATS["Shader"] == "shader"
+    assert DEFAULT_FORMATS["Font"] == "ttf"
 
 
 def test_save_texture_png_jpg(tmp_path: Path):
@@ -45,6 +51,16 @@ def test_save_texture_png_jpg(tmp_path: Path):
     jpg = save_texture(image, tmp_path / "tex", "jpg")
     assert Path(jpg).suffix == ".jpg"
     assert Image.open(jpg).mode == "RGB"
+
+
+def test_save_texture_dds_ktx(tmp_path: Path):
+    from PIL import Image
+
+    image = Image.new("RGBA", (8, 8), (200, 30, 40, 255))
+    dds = save_texture(image, tmp_path / "tex", "dds")
+    assert Path(dds).read_bytes()[:4] == b"DDS "
+    ktx = save_texture(image, tmp_path / "tex", "ktx")
+    assert Path(ktx).read_bytes()[1:4] == b"KTX"
 
 
 def test_save_mesh_obj_and_gltf(tmp_path: Path):
@@ -62,6 +78,19 @@ def test_save_mesh_obj_and_gltf(tmp_path: Path):
 def test_save_mesh_gltf_invalid_raises(tmp_path: Path):
     with pytest.raises(ValueError):
         save_mesh("bad", b"not an obj", tmp_path / "mesh", "gltf")
+
+
+def test_save_mesh_usd(tmp_path: Path):
+    obj = b"v 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nf 1/1 2/2 3/3\n"
+    usda_target = save_mesh("quad", obj, tmp_path / "mesh", "usda")
+    assert Path(usda_target).suffix == ".usda"
+    text = Path(usda_target).read_text(encoding="utf-8")
+    assert text.startswith("#usda 1.0")
+    assert 'def Mesh "quad"' in text
+
+    usd_target = save_mesh("quad", obj, tmp_path / "mesh2", "usd")
+    assert Path(usd_target).suffix == ".usd"
+    assert Path(usd_target).read_text(encoding="utf-8").startswith("#usda 1.0")
 
 
 def test_save_text(tmp_path: Path):

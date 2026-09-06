@@ -173,6 +173,11 @@ def _type_icon(kind: str) -> QIcon:
     return QIcon(pixmap)
 
 
+_REPLACE_TEXTURE = "Texture2D"
+_REPLACE_TEXT = "TextAsset"
+_REPLACE_FONT = "Font"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings: Optional[Settings] = None):
         super().__init__()
@@ -186,6 +191,7 @@ class MainWindow(QMainWindow):
         self.current_executable: Optional[str] = None
         self.current_engine: Optional[str] = None
         self.unity_archive: Optional[UnityArchive] = None
+        self._unity_archives: Dict[str, UnityArchive] = {}
         self.unity_assets: Dict[Tuple[str, str], object] = {}
         self._unity_engine_versions: Dict[str, Tuple[str, int]] = {}
         self.pak_archives: Dict[str, PakArchive] = {}
@@ -271,14 +277,27 @@ class MainWindow(QMainWindow):
         props_widget = QWidget()
         props_layout = QVBoxLayout(props_widget)
         props_layout.setContentsMargins(6, 6, 6, 6)
+        from PySide6.QtWidgets import QSplitter
+
+        self.props_splitter = QSplitter(Qt.Orientation.Vertical, props_widget)
         self.properties_table = QTableWidget(0, 2)
         self.properties_table.setHorizontalHeaderLabels(["Property", "Value"])
         self.properties_table.horizontalHeader().setStretchLastSection(True)
         self.properties_table.setColumnWidth(0, 130)
         self.properties_table.verticalHeader().setVisible(False)
-        props_layout.addWidget(self.properties_table)
+        from dualforge.ui.widgets import InspectorTree
+
+        self.inspector_tree = InspectorTree()
+        self.inspector_tree.setObjectName("inspector_tree")
+        self.props_splitter.addWidget(self.properties_table)
+        self.props_splitter.addWidget(self.inspector_tree)
+        self.props_splitter.setStretchFactor(0, 0)
+        self.props_splitter.setStretchFactor(1, 1)
+        self.props_splitter.setSizes([120, 240])
+        props_layout.addWidget(self.props_splitter)
         self.properties_dock.setWidget(props_widget)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.properties_dock)
+        self.preview_panel.typetree_loaded.connect(self._on_typetree_loaded)
 
         self.log_dock = QDockWidget("Log", self)
         self.log_dock.setObjectName("log_dock")
@@ -447,9 +466,12 @@ class MainWindow(QMainWindow):
         self.item_count = QLabel()
         self.item_count.setProperty("role", "badge")
         self.preview_note = QLabel("Ready")
+        self.format_chips = QLabel("")
+        self.format_chips.setProperty("role", "badge")
         status.addWidget(self.engine_badge)
         status.addWidget(self.driver_badge)
         status.addWidget(self.item_count)
+        status.addWidget(self.format_chips)
         status.addPermanentWidget(self.preview_note)
         self._set_engine(None)
         self._set_driver(None)
@@ -468,12 +490,18 @@ class MainWindow(QMainWindow):
             self.engine_badge.setText("No archive")
             self.engine_badge.setStyleSheet("color: #8b90a3;")
             self.item_count.setText("")
+            self._refresh_format_chips()
             return
         label = {"unity": "Unity", "unreal": "Unreal", "container": "Container"}.get(engine, engine.title())
         if detail:
             label += f" · {detail}"
         self.engine_badge.setText(f"● {label}")
         self.engine_badge.setStyleSheet(f"color: {colors.get(engine, '#e88b3a')};")
+
+    def _refresh_format_chips(self) -> None:
+        formats = getattr(self.settings, "export_formats", None) or {}
+        chips = " ".join(f"{k}:{v}" for k, v in sorted(formats.items()))
+        self.format_chips.setText(f"formats ▸ {chips}" if chips else "formats ▸ defaults")
 
     # ---- loading ----
 
@@ -494,6 +522,7 @@ class MainWindow(QMainWindow):
         if not folder_mode:
             self.current_executable = None
         self.unity_archive = None
+        self._unity_archives.clear()
         self.unity_assets.clear()
         self._unity_engine_versions.clear()
         self.pak_archives.clear()
@@ -503,6 +532,7 @@ class MainWindow(QMainWindow):
         self._tree_builder = AssetTreeBuilder(self.tree)
         self.search_edit.clear()
         self.properties_table.setRowCount(0)
+        self.inspector_tree.clear_object()
 
     def _load(self, path: str) -> None:
         self.current_path = path
@@ -567,6 +597,7 @@ class MainWindow(QMainWindow):
     def _load_unity(self, path: str, root: Optional[QTreeWidgetItem] = None) -> int:
         archive = UnityArchive(path)
         self.unity_archive = archive
+        self._unity_archives[path] = archive
         assets = list(archive.assets())
         self._unity_engine_versions[path] = (
             archive.engine_version(),
@@ -996,6 +1027,12 @@ class MainWindow(QMainWindow):
             value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.properties_table.setItem(index, 0, key_item)
             self.properties_table.setItem(index, 1, value_item)
+        self.inspector_tree.clear_object()
+
+    def _on_typetree_loaded(self, tree: dict) -> None:
+        data = self._current_item_data() or {}
+        title = data.get("path") or "Object"
+        self.inspector_tree.set_object(title, tree)
 
     # ---- tree context menu ----
 
@@ -1004,9 +1041,20 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         data = item.data(0, USER_ROLE) or {}
+        engine = data.get("engine")
+        asset_type = ""
+        if engine == "unity":
+            path = data.get("path", "")
+            archive = data.get("archive") or self.current_path or ""
+            asset = self.unity_assets.get((archive, path))
+            if asset is not None:
+                asset_type = asset.type_name
         menu = QMenu(self)
         preview_action = menu.addAction("Preview")
         export_action = menu.addAction("Export Selected...")
+        replace_action = None
+        if engine == "unity" and asset_type in {_REPLACE_TEXTURE, _REPLACE_TEXT, _REPLACE_FONT}:
+            replace_action = menu.addAction("Replace with File...")
         open_action = None
         if self._last_out_dir:
             open_action = menu.addAction("Open Last Output Folder")
@@ -1020,10 +1068,67 @@ class MainWindow(QMainWindow):
             self._show_preview()
         elif chosen is export_action:
             self.extract_selected()
+        elif chosen is not None and replace_action is not None and chosen is replace_action:
+            self._replace_selected()
         elif chosen is not None and open_action is not None and chosen is open_action:
             self._open_folder(self._last_out_dir)
         elif chosen is not None and reveal_action is not None and chosen is reveal_action:
             self._open_folder(extract_dir)
+
+    def _replace_selected(self) -> None:
+        if self.current_path is None:
+            return
+        data = self._current_item_data() or {}
+        archive = data.get("archive") or self.current_path
+        path = data.get("path", "")
+        asset = self.unity_assets.get((archive, path))
+        if asset is None:
+            return
+        archive_handle = self._unity_archives.get(archive) or self.unity_archive
+        if archive_handle is None:
+            return
+        from dualforge.unity.repack import replace_font, replace_text_asset, replace_texture, save_archive
+
+        caption = f"Replace {asset.type_name} - choose source file"
+        if asset.type_name == _REPLACE_TEXTURE:
+            source, _ = QFileDialog.getOpenFileName(
+                self, caption, "", "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tga *.dds *.tex)"
+            )
+            if not source:
+                return
+            replace_texture(archive_handle, asset, source)
+        elif asset.type_name == _REPLACE_TEXT:
+            source, _ = QFileDialog.getOpenFileName(self, caption, "", "Text (*.txt *.json *.xml *.csv *.log *.lua *.cs);;All files (*)")
+            if not source:
+                return
+            with open(source, "rb") as fh:
+                data_in = fh.read()
+            replace_text_asset(archive_handle, asset, data_in)
+        elif asset.type_name == _REPLACE_FONT:
+            source, _ = QFileDialog.getOpenFileName(self, caption, "", "Fonts (*.ttf *.otf)")
+            if not source:
+                return
+            replace_font(archive_handle, asset, source)
+        else:
+            return
+        out_dir = QFileDialog.getExistingDirectory(
+            self, "Save repacked archive to (new folder - never the source)",
+            self.settings.profiles_dir or str(Path.home()),
+        )
+        if not out_dir:
+            return
+        if Path(out_dir).resolve() == Path(archive).resolve():
+            QMessageBox.warning(
+                self, "DualForge", "Refusing to overwrite the source archive. Choose a different output folder.",
+            )
+            return
+        try:
+            save_archive(archive_handle, out_dir)
+        except Exception as exc:
+            QMessageBox.critical(self, "DualForge", f"Repack failed:\n{exc}")
+            return
+        self.statusBar().showMessage(f"Repacked '{Path(path).name}' -> {out_dir}")
+        self._last_out_dir = out_dir
 
     def _extract_dir_for(self, data: dict) -> Optional[str]:
         ext_path = data.get("path", "") or ""
@@ -1107,10 +1212,11 @@ class MainWindow(QMainWindow):
         out_dir = QFileDialog.getExistingDirectory(
             self,
             "Choose output directory",
-            self.settings.default_out_dir or "",
+            self._last_out_dir or self.settings.default_out_dir or "",
         )
         if not out_dir:
             return
+        default_dir = str(Path(out_dir).resolve())
         self._last_out_dir = out_dir
         self.log.clear()
         self._progress_bar = QProgressBar()
@@ -1159,6 +1265,10 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText(f"extracted {ok} assets")
         for error in errors:
             self.log.appendPlainText(f"warning: {error}")
+        if self._last_out_dir:
+            self.settings.default_out_dir = self._last_out_dir
+            self.settings.save()
+        self._refresh_format_chips()
         box = QMessageBox(self)
         box.setWindowTitle("DualForge")
         box.setIcon(QMessageBox.Icon.Information)
@@ -1271,6 +1381,7 @@ class MainWindow(QMainWindow):
             self.settings.save()
             apply_theme(QApplication.instance(), self.settings.theme)
             self._refresh_toolbar_icons()
+            self._refresh_format_chips()
             self.log.appendPlainText("settings saved")
 
     def _change_theme(self) -> None:

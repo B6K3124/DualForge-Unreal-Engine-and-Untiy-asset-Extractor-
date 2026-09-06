@@ -89,11 +89,39 @@ class MeshView(QOpenGLWidget):
         self._vao: Optional[QOpenGLVertexArrayObject] = None
         self._vbo: Optional[QOpenGLBuffer] = None
         self._vbo_edges: Optional[QOpenGLBuffer] = None
+        self._vbo_bones: Optional[QOpenGLBuffer] = None
         self._ebo_tris: Optional[QOpenGLBuffer] = None
         self._ebo_edges: Optional[QOpenGLBuffer] = None
         self._solid_color = QColor("#e88b3a")
         self._edge_color = QColor("#1b1c22")
+        self._bone_color = QColor("#4fae6d")
+        self._joint_data: Optional[np.ndarray] = None
+        self._bone_edges: Optional[np.ndarray] = None
+        self._joint_dots: Optional[np.ndarray] = None
+        self._bone_line_count = 0
         self._dirty = True
+
+    def set_bones(self, bones) -> None:
+        self._joint_data = None
+        self._bone_edges = None
+        self._joint_dots = None
+        if not bones:
+            self.update()
+            return
+        points = np.array(
+            [[bone["x"], bone["y"], bone["z"]] for bone in bones],
+            dtype=np.float32,
+        )
+        self._joint_data = points
+        parent_indices = [bone["parent"] for bone in bones]
+        lines = []
+        for index, parent in enumerate(parent_indices):
+            if parent >= 0 and parent < len(bones):
+                lines.append([index, parent])
+        if lines:
+            self._bone_edges = np.asarray(lines, dtype=np.uint32).ravel()
+        self._dirty = True
+        self.update()
 
     def set_mesh(self, verts: np.ndarray, normals: np.ndarray, tris: np.ndarray, edges: np.ndarray) -> None:
         self._verts = np.ascontiguousarray(verts, dtype=np.float32)
@@ -159,6 +187,22 @@ class MeshView(QOpenGLWidget):
             self._vbo_edges.bind()
             edge_verts = np.ascontiguousarray(self._verts[self._edges.ravel()], dtype=np.float32)
             self._vbo_edges.allocate(edge_verts.tobytes(), edge_verts.nbytes)
+
+        if self._joint_data is not None:
+            self._vbo_bones = QOpenGLBuffer(QOpenGLBuffer.Type.VertexBuffer)
+            self._vbo_bones.create()
+            self._vbo_bones.bind()
+            if self._bone_edges is not None and len(self._bone_edges):
+                line_verts = np.ascontiguousarray(self._joint_data[self._bone_edges], dtype=np.float32)
+            else:
+                line_verts = np.empty((0, 3), dtype=np.float32)
+            self._vbo_bones.allocate(line_verts.tobytes(), line_verts.nbytes)
+            self._bone_line_count = len(line_verts)
+            self._joint_dots = np.ascontiguousarray(self._joint_data, dtype=np.float32)
+        else:
+            self._vbo_bones = None
+            self._joint_dots = None
+            self._bone_line_count = 0
         self._vao.release()
 
     def paintGL(self) -> None:
@@ -200,6 +244,25 @@ class MeshView(QOpenGLWidget):
             self._program.setUniformValue("uWireframe", 1.0)
             self._gl.glDrawArrays(self._gl.GL_LINES, 0, self._edges.size)
             self._vbo_edges.release()
+
+        if self._vbo_bones is not None and self._vbo_bones.isCreated() and self._bone_line_count:
+            self._vbo_bones.bind()
+            self._gl.glEnableVertexAttribArray(0)
+            self._gl.glVertexAttribPointer(0, 3, self._gl.GL_FLOAT, False, 3 * 4, 0)
+            self._program.setUniformValue("uColor", self._bone_color)
+            self._program.setUniformValue("uWireframe", 1.0)
+            self._gl.glDrawArrays(self._gl.GL_LINES, 0, self._bone_line_count)
+            self._vbo_bones.release()
+
+        if self._joint_dots is not None and self._vbo_bones is not None:
+            self._vbo_bones.bind()
+            self._gl.glEnableVertexAttribArray(0)
+            self._gl.glVertexAttribPointer(0, 3, self._gl.GL_FLOAT, False, 3 * 4, 0)
+            self._program.setUniformValue("uColor", self._bone_color)
+            self._program.setUniformValue("uWireframe", 1.0)
+            self._gl.glPointSize(7.0)
+            self._gl.glDrawArrays(self._gl.GL_POINTS, 0, len(self._joint_dots))
+            self._vbo_bones.release()
         self._program.release()
         self._vao.release()
 

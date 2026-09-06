@@ -1,12 +1,19 @@
 import struct
 
-from dualforge.detector import PAK_MAGIC, detect_header
+from dualforge.detector import (
+    IL2CPP_METADATA_MAGIC,
+    LOCRES_MAGIC,
+    PAK_MAGIC,
+    detect_header,
+)
 
 PAK_HEADER = struct.pack("<IIQ", PAK_MAGIC, 9, 1024) + b"\x00" * 12
 UNITY_FS = b"UnityFS\x00" + struct.pack("<I", 7) + b"2021.3.16f1\x00" + b"\x00" * 16
 UNITY_WEB = b"UnityWeb\x00" + struct.pack("<I", 6) + b"2019.4.40f1\x00" + b"\x00" * 16
 UTOC_HEADER = b"-==--==--==--==-" + b"\x00" * 16
 UNITY_SERIALIZED = b"\x00" * 8 + struct.pack("<I", 22) + b"\x00" * 16
+LOCRES_HEADER = struct.pack("<I", LOCRES_MAGIC) + b"\x00" * 16
+IL2CPP_METADATA = struct.pack("<Ii", IL2CPP_METADATA_MAGIC, 31) + b"\x00" * 16
 
 
 def test_pak():
@@ -71,3 +78,33 @@ def test_unity_serialized_globalgamemanagers_by_name():
 
 def test_unity_serialized_rejects_zero_version():
     assert detect_header(b"\x00" * 32, "random.bin") is None
+
+
+def test_locres_detection():
+    detection = detect_header(LOCRES_HEADER, "Game.locres")
+    assert detection.engine == "unreal"
+    assert detection.kind == "locres"
+
+
+def test_il2cpp_metadata_detection():
+    detection = detect_header(IL2CPP_METADATA, "global-metadata.dat")
+    assert detection.engine == "unity"
+    assert detection.kind == "il2cpp-metadata"
+    assert detection.details["metadata_version"] == 31
+
+
+def test_dds_detection():
+    import struct as _s
+
+    header = b"DDS " + _s.pack("<I", 124) + b"\x00" * 4 + _s.pack("<II", 64, 32) + b"\x00" * 12
+    detection = detect_header(header, "tex.dds")
+    assert detection.engine == "container"
+    assert detection.kind == "dds"
+    assert detection.details == {"width": 64, "height": 32}
+
+
+def test_ktx_detection():
+    header = b"\xABKTX 11\xBB\r\n\x1a\n" + b"\x00" * 16
+    detection = detect_header(header, "tex.ktx")
+    assert detection.engine == "container"
+    assert detection.kind == "ktx"
