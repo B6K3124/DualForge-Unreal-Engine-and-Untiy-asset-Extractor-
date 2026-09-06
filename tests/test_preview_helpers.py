@@ -56,6 +56,40 @@ def test_pil_to_qimage():
     assert qimage.pixelColor(1, 1).alpha() == 128
 
 
+def test_sniff_image_gpu_textures():
+    from PIL import Image
+
+    from dualforge.export.texture import image_to_dds, image_to_ktx
+    from dualforge.ui.preview_helpers import sniff_image
+
+    image = Image.new("RGBA", (4, 4), (12, 34, 56, 255))
+    for blob in (image_to_dds(image), image_to_ktx(image)):
+        qimage = sniff_image(blob)
+        assert qimage is not None
+        assert (qimage.width(), qimage.height()) == (4, 4)
+        assert ((qimage.pixel(0, 0) >> 16) & 0xFF) == 12  # red channel
+
+
+def test_sniff_image_ktx2():
+    import struct
+
+    from dualforge.ui.preview_helpers import sniff_image
+
+    header = bytearray(80)
+    header[0:12] = b"\xABKTX 20\xBB\r\n\x1A\n"
+    struct.pack_into("<I", header, 12, 37)  # R8G8B8A8_UNORM
+    struct.pack_into("<I", header, 16, 1)
+    struct.pack_into("<I", header, 20, 4)
+    struct.pack_into("<I", header, 24, 4)
+    struct.pack_into("<I", header, 36, 1)
+    struct.pack_into("<I", header, 40, 1)
+    struct.pack_into("<I", header, 44, 0)
+    payload = bytes([200, 100, 50, 255]) * 16
+    blob = bytes(header) + struct.pack("<II", 88, len(payload)) + payload
+    qimage = sniff_image(blob)
+    assert qimage is not None and qimage.width() == 4
+
+
 def test_format_bytes():
     assert format_bytes(0) == "0 B"
     assert format_bytes(1024) == "1.0 KB"

@@ -108,3 +108,23 @@ def test_ktx_detection():
     detection = detect_header(header, "tex.ktx")
     assert detection.engine == "container"
     assert detection.kind == "ktx"
+
+
+def test_ktx2_detection():
+    header = b"\xABKTX 20\xBB\r\n\x1a\n" + b"\x00" * 16
+    detection = detect_header(header, "tex.ktx2")
+    assert detection.engine == "container"
+    assert detection.kind == "ktx2"
+
+
+def test_unity_serialized_name_variants():
+    for name in ("resources.assets", "sharedassets7.assets", "assets.resS", "maindata"):
+        detection = detect_header(b"\x00" * 32, name)
+        assert detection is not None and detection.engine == "unity", name
+        assert detection.kind == "serialized", name
+
+
+def test_unity_resS_name_by_extension():
+    detection = detect_header(b"\x00" * 32, "cubemap_tex.resS")
+    assert detection is not None
+    assert detection.engine == "unity" and detection.kind == "serialized"

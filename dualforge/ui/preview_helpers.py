@@ -207,6 +207,17 @@ def sniff_image(data: bytes) -> Optional["QImage"]:
         image = QImage.fromData(data)
         if not image.isNull():
             return image
+    # GPU texture containers (DDS / KTX1 / KTX2) aren't readable by Qt/ImageMagick;
+    # decode them in pure Python, then hand the result to Qt.
+    if data[:4] == b"DDS " or data[:12] in (b"\xABKTX 11\xBB\r\n\x1A\n", b"\xABKTX 20\xBB\r\n\x1A\n"):
+        try:
+            from dualforge.export.texture_decode import decode_texture_data
+
+            decoded = decode_texture_data(data)
+            if decoded is not None:
+                return pil_to_qimage(decoded)
+        except Exception:
+            return None
     return None
 
 

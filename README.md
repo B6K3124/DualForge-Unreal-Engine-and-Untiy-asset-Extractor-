@@ -71,12 +71,12 @@ classic tools can't do:
 - **Universal decompression core** — one unified `decompress()` API over zlib, gzip, bz2, lzma, LZ4/LZ4HC, Zstandard, Brotli, snappy, zip and 7z, with automatic magic sniffing and nested-container recursion.
 - **Oodle support** — loads the game-shipped `oo2core_*.dll` via ctypes (`OodleLZ_Decompress`). The DLL is never bundled with DualForge.
 - **Multi-key-type decryption (beyond plain AES)** — every encrypted archive is opened by **auto-probing all stored keys** (no-key first, then every entry in the key store, then the default key), with the winning key reported in the log. Keys come from manual entry, FModel `Global.AESKeys.json` import, or opt-in community endpoint sync (FortniteCentral + multi-game `aes.ue4server.com`, configurable). Each stored key is tagged with a **scheme** (AES-256, AES+XOR, derived/hash-keyed, partial encryption, custom round-key AES, Unity-CN XOR, ...) plus optional GUID and scheme parameters, so games with non-standard protection are first-class citizens. `keys test` verifies a scheme+key offline and `keys schemes` lists what's supported. UE 5.4+ paks that use per-chunk dynamic keys are detected and routed to the CUE4Parse bridge with the right `game` profile and dynamic keys.
-- **Unity streamed data (.resS)** — sibling `.resS`/`.resource`/`.split*` stream files next to a bundle are loaded automatically, so streamed textures, audio and mesh data decode without manual file juggling.
+- **Unity streamed data (.resS)** — sibling `.resS`/`.resource`/`.split*`/`.resA`/`.resH` stream files next to a bundle are loaded automatically (plus any external-file references UnityPy reports), so streamed textures, audio and mesh data decode without manual file juggling.
 - **Hierarchical asset browser** — folder tree with per-asset checkboxes, regex + type filters, "Check All / None", and multi-archive **Open Folder** mode (scan a whole game directory).
-- **Asset previews** — texture/sprite image viewer (zoom/pan), audio clip waveform with inline playback (QtMultimedia), 3D mesh viewer (OpenGL wireframe + solid), text/JSON/XML viewer, and a full hex inspector. Unreal files preview natively from the pak (images, WAV/OGG/FLAC, `.wem`-style audio via vgmstream, text, hex).
+- **Asset previews** — texture/sprite image viewer (zoom/pan), audio clip waveform with inline playback (QtMultimedia), 3D mesh viewer (OpenGL wireframe + solid), text/JSON/XML viewer, and a full hex inspector. Unreal files preview natively from the pak (images, WAV/OGG/FLAC, `.wem`-style audio via vgmstream, text, hex). **DDS / KTX1 / KTX2 containers** (Qt can't read them) are decoded in pure Python — BC1–BC5 and uncompressed layouts — so in-game GPU textures preview and export losslessly with no external tools.
 - **Format-aware export** — per-type output formats (textures: PNG/JPG/BMP/WebP/TGA/**DDS**/**KTX**, audio: WAV/OGG/FLAC/raw, meshes: OBJ/glTF/**USD** with embedded buffers) configurable in Settings or via the CLI; every run writes a `_dualforge_manifest.json`.
 - **Skeleton + animation export** — skinned meshes export as glTF with an embedded skeleton, inverse-bind matrices and morph targets; `AnimationClip` assets export their position/rotation/scale tracks as glTF animation JSON.
-- **Property inspector** — the type-tree of MonoBehaviour/Material/SerializedObject assets renders as a searchable Property/Value tree, and `.locres` files dump to JSON/CSV.
+- **Property inspector** — the type-tree of MonoBehaviour/Material/SerializedObject assets renders as a searchable Property/Value tree, and `.locres` files dump to JSON/CSV or **write back** edited strings to a brand-new `.locres` (`locres edit`), preserving the input version.
 - **Write-back (repack)** — replace a `Texture2D` (PNG/JPG/.../DDS), `TextAsset` (any text/script) or `Font` (TTF/OTF) inside a loaded Unity bundle and save the edited archive to a new folder — from the tree's right-click **Replace with File...** or the `repack` CLI.
 - **Asset statistics** — per-type file counts and sizes in a summary dialog.
 - **Game profiles** — save a game folder + AES key + output folder and reopen it in one click; the bound key is shown on each profile row.
@@ -239,6 +239,9 @@ python main.py repack font   "game_Data\sharedassets0.assets" "fonts/title"   "t
 
 # Dump UE .locres localization to JSON/CSV
 python main.py locres dump "game\Content\Localization\Game\Game.locres" -o game.json
+
+# Patch .locres entries (write a NEW file, never the source) with UTF-16 output
+python main.py locres edit "game\Content\Localization\Game\Game.locres" "Menu.START=Begin" "Menu.QUIT=Exit" -o game_edited.locres
 ```
 
 ### Generating a mappings file (`.usmap`) for Unreal Engine games

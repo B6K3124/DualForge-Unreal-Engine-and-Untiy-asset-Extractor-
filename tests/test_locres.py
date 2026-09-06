@@ -6,9 +6,13 @@ import pytest
 
 from dualforge.unreal.locres import (
     MAGIC,
+    LocresEntry,
     LocresFile,
+    apply_replacements,
+    encode_locres,
     parse_locres,
     parse_locres_file,
+    save_locres,
 )
 
 
@@ -103,8 +107,55 @@ def test_parse_file(tmp_path):
 
 def test_locres_file_dataclass():
     locres = LocresFile(version=2, magic_ok=True)
-    from dualforge.unreal.locres import LocresEntry
-
     locres.entries.append(LocresEntry(namespace="A", key="B", value="C"))
     assert locres.as_dict() == {"A.B": "C"}
     assert locres.to_json()
+
+
+def _entries_from(locres: bytes):
+    return parse_locres(locres).entries
+
+
+def test_encode_roundtrip_version2_and_3():
+    original = parse_locres(_build_locres(2))
+    for version in (2, 3):
+        reencoded = encode_locres(original.entries, version=version)
+        reparsed = parse_locres(reencoded)
+        assert reparsed.magic_ok
+        assert reparsed.version == version
+        assert reparsed.as_dict() == original.as_dict()
+
+
+def test_encode_roundtrip_utf16_content():
+    entries = [
+        LocresEntry(namespace="Localization", key="KEY_A", value="日本語テキスト"),
+        LocresEntry(namespace="Menu", key="EMPTY", value=""),
+    ]
+    reencoded = encode_locres(entries, version=3)
+    reparsed = parse_locres(reencoded)
+    assert reparsed.as_dict() == {
+        "Localization.KEY_A": "日本語テキスト",
+        "Menu.EMPTY": "",
+    }
+
+
+def test_encode_rejects_unsupported_versions():
+    from dualforge.unreal.locres import MAGIC as fmt_magic
+
+    with pytest.raises(ValueError):
+        encode_locres([], version=1)
+
+
+def test_save_locres_creates_file(tmp_path):
+    original = parse_locres(_build_locres(2))
+    target = tmp_path / "en.locres"
+    count = save_locres(str(target), original.entries, version=3)
+    assert count == 3
+    assert parse_locres_file(str(target)).as_dict() == original.as_dict()
+
+
+def test_apply_replacements():
+    original = parse_locres(_build_locres(2))
+    updated = apply_replacements(original.entries, {"Menu.START": "Begin"})
+    assert {e.qualified_key: e.value for e in updated}["Menu.START"] == "Begin"
+    assert {e.qualified_key: e.value for e in updated}["Menu.QUIT"] == "Quit"

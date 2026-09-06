@@ -66,3 +66,55 @@ def test_crack_run_hunt_failed_returns_nonzero(monkeypatch, capsys):
     rc, out = _run_handler(monkeypatch, capsys, result, ["run", "test"])
     assert rc == 1
     assert "hunt failed (exit 3)" in out
+
+
+def test_locres_edit_roundtrip(tmp_path, capsys):
+    import struct
+
+    from dualforge.unreal.locres import MAGIC, parse_locres
+
+    def fstr(text: str) -> bytes:
+        data = text.encode("utf-8") + b"\x00"
+        return struct.pack("<i", len(data)) + data
+
+    src = tmp_path / "en.locres"
+    payload = bytearray(struct.pack("<I", MAGIC) + bytes([2]))
+    payload += struct.pack("<I", 1) + fstr("Menu") + struct.pack("<I", 2)
+    payload += fstr("START") + fstr("Start Game")
+    payload += fstr("QUIT") + fstr("Quit")
+    src.write_bytes(bytes(payload))
+
+    out = tmp_path / "en_new.locres"
+    args = cli.build_parser().parse_args(
+        ["locres", "edit", str(src), "Menu.START=Begin", "-o", str(out)]
+    )
+    rc = cli._cmd_locres_edit(args)
+    assert rc == 0
+    assert "wrote 2 entries" in capsys.readouterr().out
+    edited = parse_locres(out.read_bytes())
+    assert edited.as_dict() == {"Menu.START": "Begin", "Menu.QUIT": "Quit"}
+    assert edited.version == 2
+
+
+def test_locres_edit_refuses_source_overwrite(tmp_path, capsys):
+    import struct
+
+    from dualforge.unreal.locres import MAGIC, parse_locres
+
+    def fstr(text: str) -> bytes:
+        data = text.encode("utf-8") + b"\x00"
+        return struct.pack("<i", len(data)) + data
+
+    src = tmp_path / "en.locres"
+    payload = bytearray(struct.pack("<I", MAGIC) + bytes([3]))
+    payload += struct.pack("<I", 1) + fstr("Menu") + struct.pack("<I", 1)
+    payload += fstr("START") + fstr("Start Game")
+    src.write_bytes(bytes(payload))
+    assert parse_locres(src.read_bytes()).as_dict() == {"Menu.START": "Start Game"}
+
+    args = cli.build_parser().parse_args(
+        ["locres", "edit", str(src), "Menu.START=Begin", "-o", str(src)]
+    )
+    rc = cli._cmd_locres_edit(args)
+    assert rc == 1
+    assert "refusing to overwrite the source" in capsys.readouterr().err

@@ -63,6 +63,8 @@ class UnityArchive:
                 f"{stem}.split*",
                 "CAB-*.resS",
                 "*.resS",
+                "*.resA",
+                "*.resH",
                 "*.resource",
             ):
                 candidates.extend(directory.glob(pattern))

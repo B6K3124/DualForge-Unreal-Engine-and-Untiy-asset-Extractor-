@@ -3,6 +3,8 @@ from dualforge.detector.detector import (
     BSA_MAGIC,
     DDS_MAGIC,
     IL2CPP_METADATA_MAGIC,
+    KTX1_MAGIC,
+    KTX2_MAGIC,
     KTX_MAGIC,
     LOCRES_MAGIC,
     Detection,
@@ -24,6 +26,8 @@ __all__ = [
     "RDAR_MAGIC",
     "DDS_MAGIC",
     "KTX_MAGIC",
+    "KTX1_MAGIC",
+    "KTX2_MAGIC",
     "LOCRES_MAGIC",
     "IL2CPP_METADATA_MAGIC",
 ]

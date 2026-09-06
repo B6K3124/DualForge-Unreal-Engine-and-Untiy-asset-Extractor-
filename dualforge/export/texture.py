@@ -11,9 +11,30 @@ from typing import List
 
 
 def load_image(path: str):
-    """Load an image file (png/jpg/tga/dds/ktx/...) as RGBA via Pillow."""
+    """Load an image file (png/jpg/tga/dds/ktx/...) as RGBA via Pillow.
+
+    DDS / KTX1 / KTX2 files (which Pillow cannot open) are decoded in pure
+    Python first, so repack write-backs accept GPU textures as replacement
+    images.
+    """
     from PIL import Image, ImageOps
 
+    with open(path, "rb") as fh:
+        head = fh.read(12)
+    try:
+        if head[:4] == b"DDS " or head[:12] in (
+            b"\xABKTX 11\xBB\r\n\x1A\n",
+            b"\xABKTX 20\xBB\r\n\x1A\n",
+        ):
+            from dualforge.export.texture_decode import decode_texture_data
+
+            with open(path, "rb") as fh:
+                image = decode_texture_data(fh.read())
+            if image is None:
+                raise ValueError(f"unrecognized texture container: {path}")
+            return image
+    except FileNotFoundError:
+        raise
     image = Image.open(path)
     image.load()
     image = ImageOps.exif_transpose(image)
@@ -71,9 +92,11 @@ def _dds_header(width: int, height: int, pitch: int, mips: int) -> bytes:
     flags |= 0x1000  # DDSD_PIXELFORMAT
     if mips > 1:
         flags |= 0x20000  # DDSD_MIPMAPCOUNT
-    # BGRA masks
-    r, g, b, a = 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000
-    pixelfmt = struct.pack("<5I", 32, 0x41, 0, 32, 0)  # size, DDPF_RGB, fourcc, bitcount, reserved
+    # RGBA masks matching the stored byte order (R,G,B,A).
+    r, g, b, a = 0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000
+    # DDSPIXELFORMAT: size, flags, fourcc, RGBBitCount, RBitMask, GBitMask,
+    # BBitMask, ABitMask (exactly 32 bytes).
+    pixelfmt = struct.pack("<8I", 32, 0x41, 0, 32, r, g, b, a)
     caps = 0x1000  # DDSCAPS_TEXTURE
     if mips > 1:
         caps |= 0x400008  # COMPLEX | MIPMAP
@@ -87,12 +110,8 @@ def _dds_header(width: int, height: int, pitch: int, mips: int) -> bytes:
             struct.pack("<I", pitch),
             struct.pack("<I", 0),  # depth
             struct.pack("<I", mips if mips > 1 else 0),  # mipmap count
-            b"\x00" * 44,  # reserved[11]
+            b"\x00" * 44,  # reserved[11] -> 124-byte header at offset 128 total
             pixelfmt,
-            struct.pack("<I", r),
-            struct.pack("<I", g),
-            struct.pack("<I", b),
-            struct.pack("<I", a),
             struct.pack("<4I", caps, 0, 0, 0),  # caps[4]
             struct.pack("<I", 0),  # reserved2
         ]
@@ -100,23 +119,26 @@ def _dds_header(width: int, height: int, pitch: int, mips: int) -> bytes:
 
 
 def image_to_ktx(image, mips: int = 0) -> bytes:
-    """Encode a PIL image as an RGBA8 KTX1 file (single mip unless requested)."""
+    """Encode a PIL image as an RGBA8 KTX1 file (single mip unless requested).
+
+    KTX stores rows top-down (OpenGL convention), unlike DDS.
+    """
     width, height = image.size
-    pixels = _flip_rgba(image)
+    pixels = b"".join(image_to_rgba_rows(image))
     header = struct.pack(
         "<12sIIIIIIIIIIIII",
         bytes([0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A]),
         0x04030201,  # endianness
-        0x1908,  # glType = GL_UNSIGNED_BYTE
+        0x1401,  # glType = GL_UNSIGNED_BYTE
         1,  # glTypeSize
-        0x0408,  # glFormat = GL_RGBA
-        0x1908,  # glInternalFormat = GL_RGBA8
-        0x0408,  # glBaseInternalFormat
+        0x1908,  # glFormat = GL_RGBA
+        0x1908,  # glInternalFormat = GL_RGBA
+        0x1908,  # glBaseInternalFormat
         width,  # pixelWidth
         height,  # pixelHeight
         0,  # pixelDepth
-        1,  # numberOfArrayElements
-        0,  # numberOfFaces
+        0,  # numberOfArrayElements
+        1,  # numberOfFaces (2D texture)
         mips if mips > 1 else 0,  # numberOfMipmapLevels
         0,  # bytesOfKeyValueData
     )
@@ -129,7 +151,7 @@ def image_to_ktx(image, mips: int = 0) -> bytes:
             h //= 2
     payload = b""
     for blob in mip_blobs:
-        payload += struct.pack("<III", len(blob), 0, 0) + blob
+        payload += struct.pack("<I", len(blob)) + blob
     return header + payload
 
 

@@ -103,6 +103,62 @@ def test_save_archive_delegates(tmp_path: Path):
     assert (tmp_path / "out").name == "out"
 
 
+def test_save_archive_rejects_unknown_pack():
+    with pytest.raises(Exception):
+        save_archive(_FakeArchive(), "out", pack="bogus")
+
+
+def test_save_archive_refuses_source_directory(tmp_path: Path):
+    source = tmp_path / "game.bundle"
+    source.write_bytes(b"fake")
+    env = _FakeEnv()
+    archive = NS(env=env, path=str(source))
+    with pytest.raises(Exception):
+        save_archive(archive, str(tmp_path), "none")  # same folder as source
+
+
+def test_save_archive_verifies_written_output(tmp_path: Path):
+    source = tmp_path / "game.bundle"
+    source.write_bytes(b"fake")
+    out = tmp_path / "repacked"
+
+    class WritingEnv:
+        saved = False
+
+        def save(self, **kwargs):
+            self.saved = True
+            out.mkdir(parents=True, exist_ok=True)
+            (out / source.name).write_bytes(b"repacked data")
+
+    env = WritingEnv()
+    archive = NS(env=env, path=str(source))
+    save_archive(archive, str(out), "none")
+    assert env.saved
+    assert (out / source.name).read_bytes() == b"repacked data"
+
+
+def test_save_archive_raises_when_nothing_written(tmp_path: Path):
+    source = tmp_path / "game.bundle"
+    source.write_bytes(b"fake")
+    archive = NS(env=_FakeEnv(), path=str(source))
+    with pytest.raises(Exception):
+        save_archive(archive, str(tmp_path / "empty_out"), "none")
+
+
+def test_load_image_from_dds_and_ktx(tmp_path: Path):
+    source_dds = tmp_path / "tex.dds"
+    source_ktx = tmp_path / "tex.ktx"
+    image = _rgba_image()
+    source_dds.write_bytes(image_to_dds(image))
+    source_ktx.write_bytes(image_to_ktx(image))
+
+    dds_loaded = load_image(str(source_dds))
+    assert dds_loaded.size == (4, 4)
+    ktx_loaded = load_image(str(source_ktx))
+    assert ktx_loaded.size == (4, 4)
+    assert dds_loaded.tobytes() == ktx_loaded.tobytes()
+
+
 def test_replace_texture(tmp_path: Path):
     obj = _FakeObj()
     asset = _FakeAsset(obj)

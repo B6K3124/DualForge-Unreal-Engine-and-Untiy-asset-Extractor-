@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -265,6 +266,20 @@ def build_parser() -> argparse.ArgumentParser:
         "-o", "--out", help="output file; if omitted, prints to stdout",
     )
     locres_dump.set_defaults(locres_handler=_cmd_locres_dump)
+    locres_edit = locres_sub.add_parser("edit", help="patch one or more entries and write a new .locres file")
+    locres_edit.add_argument("path", help="path to a .locres file")
+    locres_edit.add_argument(
+        "set", nargs="+", metavar="KEY=VALUE",
+        help="replacement as qualified-key=value (e.g. NS.Key=New text); repeatable",
+    )
+    locres_edit.add_argument(
+        "-o", "--out", required=True, help="output .locres file (never the source)",
+    )
+    locres_edit.add_argument(
+        "--version", type=int, choices=(2, 3), default=None,
+        help="output format version (default: keep the input version)",
+    )
+    locres_edit.set_defaults(locres_handler=_cmd_locres_edit)
 
     repack_parser = sub.add_parser(
         "repack", help="replace an asset inside a Unity archive and save the result",
@@ -908,6 +923,41 @@ def _cmd_locres_dump(args: argparse.Namespace) -> int:
     else:
         print(content)
     return 0
+
+
+def _cmd_locres_edit(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from dualforge.unreal.locres import apply_replacements, parse_locres_file, save_locres
+
+    try:
+        locres = parse_locres_file(args.path)
+        replacements = {}
+        for item in args.set:
+            key, _, value = item.partition("=")
+            if not key or not _:
+                print(f"error: expected KEY=VALUE, got {item!r}", file=sys.stderr)
+                return 1
+            replacements[key] = value
+        missing = [k for k in replacements if k not in locres.as_dict()]
+        if missing:
+            print(
+                f"warning: {len(missing)} key(s) not found in the file; they will be written verbatim: "
+                + ", ".join(sorted(missing)[:5]),
+                file=sys.stderr,
+            )
+        entries = apply_replacements(locres.entries, replacements)
+        out_path = args.out
+        if os.path.normcase(os.path.abspath(out_path)) == os.path.normcase(os.path.abspath(args.path)):
+            print("error: refusing to overwrite the source file; pick a different --out", file=sys.stderr)
+            return 1
+        version = args.version if args.version is not None else (locres.version if locres.version in (2, 3) else 3)
+        count = save_locres(out_path, entries, version=version)
+        print(f"wrote {count} entries to {out_path} (version {version})")
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _find_unity_asset(archive: str, asset_path: str):

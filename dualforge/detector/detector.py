@@ -16,6 +16,8 @@ LOCRES_MAGIC = 0x324F4352
 IL2CPP_METADATA_MAGIC = 0xFAB11BAF
 DDS_MAGIC = b"DDS "
 KTX_MAGIC = b"\xAB" + b"KTX"
+KTX2_MAGIC = b"\xABKTX 20\xBB\r\n\x1A\n"
+KTX1_MAGIC = b"\xABKTX 11\xBB\r\n\x1A\n"
 BSA_VERSION_BY_INT = {0x67: 103, 0x68: 104, 0x69: 105}
 UNITY_SIGNATURES = (b"UnityFS", b"UnityWeb", b"UnityRaw")
 UNITY_SERIALIZED_VERSION_MIN = 13
@@ -26,6 +28,11 @@ UNITY_SERIALIZED_NAMES = frozenset(
         "globalgamemanagers.assets",
         "maindata",
         "data.unity3d",
+        "resources.assets",
+        "assets.assets",
+        "sharedassets.assets",
+        "assets.resS",
+        "resources.resS",
     }
 )
 
@@ -74,8 +81,10 @@ def detect_header(header: bytes, filename: str, path: str = "") -> Optional[Dete
         return _detect_il2cpp_metadata(header, path)
     if header.startswith(DDS_MAGIC):
         return _detect_dds(header, path)
-    if header.startswith(KTX_MAGIC):
+    if header.startswith(KTX1_MAGIC):
         return Detection(engine="container", kind="ktx", path=path)
+    if header.startswith(KTX2_MAGIC):
+        return Detection(engine="container", kind="ktx2", path=path)
     lower = filename.lower()
     if lower.endswith(".ucas"):
         return Detection(engine="unreal", kind="iostore-payload", path=path)
@@ -160,6 +169,10 @@ def _is_unity_serialized_name(filename: str) -> bool:
     if base in UNITY_SERIALIZED_NAMES:
         return True
     if base.endswith(".assets"):
+        return True
+    if base.startswith("sharedassets") and base.endswith(".assets"):
+        return base[12:-7].isdigit()
+    if base.endswith(".ress"):
         return True
     return base.startswith("level") and base[5:].isdigit()
 

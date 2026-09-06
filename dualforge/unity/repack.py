@@ -11,10 +11,14 @@ output directory; never overwrite the source file in place.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Optional
 
 from dualforge.export.texture import load_image
 from dualforge.unity.unity_module import UnityError
+
+_BACKEND_PACKS = ("none", "lz4", "lz4hc")
 
 
 def replace_texture(
@@ -25,6 +29,8 @@ def replace_texture(
     mipmap_count: int = 1,
 ) -> str:
     """Replace a Texture2D's pixels with the decoded ``image_path``."""
+    if mipmap_count < 1:
+        raise UnityError("mipmap_count must be >= 1")
     obj = asset._reader.read()
     if getattr(obj, "type", None) is None:
         raise UnityError("not a readable Unity object")
@@ -76,10 +82,34 @@ def save_archive(archive, out_dir: str, pack: str = "none") -> None:
     env = getattr(archive, "env", None)
     if env is None:
         raise UnityError("archive has no writable environment")
+    pack = (pack or "none").lower()
+    if pack not in _BACKEND_PACKS:
+        raise UnityError(
+            f"unknown pack backend {pack!r}; expected one of {', '.join(_BACKEND_PACKS)}"
+        )
+    out_dir = Path(out_dir)
+    source = Path(getattr(archive, "path", "") or "")
+    if source.name:
+        try:
+            if out_dir.resolve() == source.resolve().parent:
+                raise UnityError(
+                    f"refusing to write the repacked archive next to the source ({out_dir}); "
+                    "pick a different output directory"
+                )
+        except OSError:
+            pass  # unresolvable paths fall through to the backend error handling
     try:
-        env.save(pack=pack, out_path=out_dir)
+        env.save(pack=pack, out_path=str(out_dir))
     except Exception as exc:
         raise UnityError(f"could not save modified archive: {exc}") from exc
+    if not source.name:
+        return  # synthetic/mock archives do not produce on-disk files
+    written = [p for p in out_dir.rglob("*") if p.is_file() and p.stat().st_size > 0]
+    if not written:
+        name = source.name
+        if (out_dir / name).is_file() and (out_dir / name).stat().st_size > 0:
+            return
+        raise UnityError(f"no non-empty output written by the backend to {out_dir}")
 
 
 def _mark_changed(asset) -> None:

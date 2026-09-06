@@ -28,6 +28,8 @@ Format notes (compatible with what CUE4Parse/FModel read):
 from __future__ import annotations
 
 import json
+import struct
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -175,11 +177,71 @@ def parse_locres_file(path: str) -> LocresFile:
     return parse_locres(Path(path).read_bytes())
 
 
+def apply_replacements(
+    entries: List[LocresEntry],
+    replacements: Dict[str, str],
+) -> List[LocresEntry]:
+    """Return new entries with ``qualified_key`` -> new value applied."""
+    out = [LocresEntry(namespace=e.namespace, key=e.key, source=e.source, value=e.value) for e in entries]
+    for entry in out:
+        new_value = replacements.get(entry.qualified_key)
+        if new_value is not None:
+            entry.value = new_value
+    return out
+
+
+def encode_locres(entries: List[LocresEntry], version: int = 3) -> bytes:
+    """Serialize entries back to the .locres binary layout.
+
+    ``version`` selects which magic header to write: 2 = legacy, 3 = optimized
+    (both share the same body). Version 1 (compact) packs a key->value map
+    without re-emitting the source strings and is *not* produced here to avoid
+    guessing ownership, so callers writing files they can re-read use 2 or 3.
+
+    Strings are encoded as UTF-16LE FStrings (negative length) exactly like the
+    Unreal engine writes them, so the file stays readable by CUE4Parse/FModel.
+    """
+    if version not in (2, 3):
+        raise ValueError("encode_locres supports only versions 2 (legacy) and 3 (optimized)")
+
+    def fstring(text: str) -> bytes:
+        if not text:
+            return struct.pack("<i", 0)
+        encoded = text.encode("utf-16-le") + b"\x00\x00"  # includes NUL terminator
+        length = -(len(text) + 1)
+        return struct.pack("<i", length) + encoded
+
+    tables: "OrderedDict[str, List[LocresEntry]]" = OrderedDict()
+    for entry in entries:
+        tables.setdefault(entry.namespace, []).append(entry)
+
+    body = struct.pack("<I", len(tables))
+    for namespace, table_entries in tables.items():
+        body += fstring(namespace)
+        body += struct.pack("<I", len(table_entries))
+        for entry in table_entries:
+            body += fstring(entry.key)
+            body += fstring(entry.value)
+
+    header = struct.pack("<I", MAGIC) + bytes([version])
+    return header + body
+
+
+def save_locres(path: str, entries: List[LocresEntry], version: int = 3) -> int:
+    """Write entries to ``path`` as a .locres file; returns entry count."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_bytes(encode_locres(entries, version=version))
+    return len(entries)
+
+
 __all__ = [
     "LocresEntry",
     "LocresFile",
     "MAGIC",
     "VERSION_NAMES",
+    "apply_replacements",
+    "encode_locres",
     "parse_locres",
     "parse_locres_file",
+    "save_locres",
 ]
